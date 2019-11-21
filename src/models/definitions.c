@@ -384,6 +384,30 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 7;
         break;
         //--------------------------------------------------------------------------------------------
+    case 284:	num_global_params = 12;
+        globals->uses_dam = 0;
+        globals->num_params = 8;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 3;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 3;
+        globals->min_error_tolerances = 7;
+        break;
+        //--------------------------------------------------------------------------------------------
+    case 294:	num_global_params = 12;
+        globals->uses_dam = 0;
+        globals->num_params = 8;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 3;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 3;
+        globals->min_error_tolerances = 7;
+        break;
+        //--------------------------------------------------------------------------------------------
     case 255:	num_global_params = 3;
         globals->uses_dam = 1;
         globals->num_params = 16;
@@ -623,6 +647,14 @@ void SetOutputConstraints(GlobalVars* globals)
             globals->OutputConstrainsHdf5 = &OutputConstraints_Model254_Hdf5;
             globals->OutputConstrainsPsql = NULL;
             globals->OutputConstrainsRec = NULL;
+        case 284:
+            globals->OutputConstrainsHdf5 = &OutputConstraints_Model254_Hdf5;
+            globals->OutputConstrainsPsql = NULL;
+            globals->OutputConstrainsRec = NULL;
+        case 294:
+            globals->OutputConstrainsHdf5 = &OutputConstraints_Model254_Hdf5;
+            globals->OutputConstrainsPsql = NULL;
+            globals->OutputConstrainsRec = NULL;
         case 256:
             globals->OutputConstrainsHdf5 = &OutputConstraints_Model256_Hdf5;
             globals->OutputConstrainsPsql = NULL;
@@ -729,7 +761,7 @@ void ConvertParams(
         params[2] *= 1e6;		//A_h: km^2 -> m^2
         params[4] *= .001;		//H_h: mm -> m
     }
-    else if (model_uid == 252 || model_uid == 253 || model_uid == 254 || model_uid == 255 || model_uid == 256 || model_uid == 257 || model_uid == 258 || model_uid == 259 || model_uid == 260 || model_uid == 261 || model_uid == 262 || model_uid == 263)
+    else if (model_uid == 252 || model_uid == 253 || model_uid == 254 || model_uid == 255 || model_uid == 256 || model_uid == 257 || model_uid == 258 || model_uid == 259 || model_uid == 260 || model_uid == 261 || model_uid == 262 || model_uid == 263 || model_uid == 294 || model_uid == 284 )
     {
         params[1] *= 1000;		//L_h: km -> m
         params[2] *= 1e6;		//A_h: km^2 -> m^2
@@ -1230,6 +1262,36 @@ void InitRoutines(
             link->solver = &ForcedSolutionSolver;
         }
         else			link->differential = &TopLayerHillslope_extras;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
+    else if (model_uid == 284)
+    {
+        link->dim = 7;
+        link->no_ini_start = 4;
+        link->diff_start = 0;
+
+        link->num_dense = 2;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+        link->dense_indices[1] = 6;
+        link->differential = &TopLayerHillslope_extras_factor;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
+    else if (model_uid == 294)
+    {
+        link->dim = 7;
+        link->no_ini_start = 4;
+        link->diff_start = 0;
+
+        link->num_dense = 2;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+        link->dense_indices[1] = 6;
+        link->differential = &TopLayerHillslope_extras_Nofactor;
         link->algebraic = NULL;
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
@@ -2047,7 +2109,7 @@ void Precalculations(
         vals[6] = (0.001 / 60.0);		//(mm/hr->m/min)  c_1
         vals[7] = A_h / 60.0;	//  c_2
     }
-    else if (model_uid == 254 || model_uid == 256)
+    else if (model_uid == 254 || model_uid == 256 || model_uid == 284 || model_uid == 294)
     {
         //Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
         //The numbering is:     0   1   2    3     4   5   6   7 
@@ -2535,7 +2597,7 @@ int ReadInitData(
 		//The numbering is:        0      1        2     3   4   5  6
 		y_0[1] = params[0] / (global_params[6] + global_params[0]) * y_0[0];
 		return 0;
-	} else if (model_uid == 254) {
+	} else if (model_uid == 254 || model_uid == 284 || model_uid == 294) {
 		//For this model_uid, the extra states need to be set (4,5,6)
 		y_0[4] = 0.0;
 		y_0[5] = 0.0;
