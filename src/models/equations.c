@@ -550,6 +550,7 @@ void ExponentialExp(double t, const double * const y_i, unsigned int dim, const 
 }
 
 
+//t
 //Type 608
 //VariableTreshold3: similar to 604, in this case there are 3 different slopes
 //in function of the soil water storage.
@@ -570,8 +571,8 @@ void Tiles_Reservoirs(double t, const double * const y_i, unsigned int dim, cons
     ans[1] = 0.0;
     ans[2] = 0.0;
     ans[3] = 0.0;
-    ans[4] = 0.0;
-    ans[5] = 0.0;
+    //ans[4] = 0.0;
+    //ans[5] = 0.0;
 }
 
 void TilesModel(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
@@ -597,21 +598,23 @@ void TilesModel(double t, const double * const y_i, unsigned int dim, const doub
     // Processed parameters
     double invtau = params[16];
     double k2 = params[17];
+    //double expo = params[18];
     //Variables or sttates
     double q = y_i[0];		                                        // [m^3/s]
     double s_p = y_i[1];	                                        // [m]
     double s_l = y_i[2];	                                        // [m]
     double s_s = y_i[3];
-    //double s_t = y_i[4];
+    double q_b = max(0.001, y_i[4]);                                // for base flow separation
     //Fluxes
     double q_in = forcing_values[0] * (0.001/60);	//[m/min]
     
     double pow_t = (1.0 - s_l/t_L > 0.0)? pow(1.0 - s_l/t_L,3): 0.0;
-    double pow_t2 = (4.7 - 3.4*(s_s/1.67) > 0.0)? pow(4.7 - 3.4*(s_s/1.67),0.405): 0.0; // Exp kind of Green y Ampt 
+    //double pow_t2 = (4.7 - 3.4*(s_s/1.67) > 0.0)? pow(4.7 - 3.4*(s_s/1.67),0.405): 0.0; // Exp kind of Green y Ampt 
     double q_pl = k2*99.0*pow_t*s_p;
-    //double q_ls = k2*ki_fac*s_l;
-    double q_ls = k2*ki_fac*pow_t2*s_l; //Exp Green y Ampt approach
-    double q_pLink = k2*s_p;
+    double q_ls = k2*ki_fac*s_l;
+    //double q_ls = k2*ki_fac*pow_t2*s_l; //Exp Green y Ampt approach
+    //double q_pLink = k2*s_p;
+    double q_pLink = k2*pow(s_p,a_r);
     //subsurface runoff
     double q_sLink = 0.0;
     double q_inT = 0.0;
@@ -634,8 +637,8 @@ void TilesModel(double t, const double * const y_i, unsigned int dim, const doub
     }    
     //q_outT = d * pow(s_t, a_r);                               // Tile bring water regardless of the level of the subsurface level
     //q_outT = d * s_t;
-    ans[4] = q_in;              // Temporal (records the rain
-    ans[5] = q_sLink;                                            // Total tile outflow
+    //ans[4] = q_inT;              // Temporal (records the rain
+    //ans[5] = q_sLink;                                            // Total tile outflow
     //Evaporation
     double C_p = s_p;
     double C_l = s_l/t_L;
@@ -650,18 +653,42 @@ void TilesModel(double t, const double * const y_i, unsigned int dim, const doub
 	int q_pidx;
     //Discharge
     ans[0] = -q + ((q_pLink + q_sLink) * A_h / 60.0);
+
+    ans[4] = -q_b + (q_sLink) * A_h/60; // Tiles to stream 
+    //ans[4] = q_sLink * A_h - q_b*60.0;
+
+
 	for (i = 0; i < num_parents; i++) {
 		q_pidx = i * dim;
 		q_parent = y_p[q_pidx];
 		ans[0] += q_parent;
+        
+        q_parent = y_p[q_pidx+4];
+        //q_parent = y_p[q_pidx+4]*60;
+        ans[4] += q_parent;
 	}
     ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    
+    //Baseflow count
+    //ans[4] = (q_b/q)*ans[0];
+    ans[4] = invtau * pow(q_b, lambda_1) * ans[4];
+
+    //ans[4] *= v_r/L_i;
+
     //Ponded
     ans[1] = q_in - q_pl - q_pLink - e_p;
     //Top Soil Layer
     ans[2] = q_pl - q_ls - e_l;	
     //Subsurface (saturated) soil
     ans[3] = q_ls - q_sLink - e_s;
+    
+    //Base flow separation
+    //ans[4] = q_sl * A_h - q_b*60.0;
+    //for (i = 0; i<num_parents; i++)
+      //  ans[4] += y_p[i * dim + 4] * 60.0;
+    //ans[6] += k_3*y_p[i].ve[3]*A_h;
+    //ans[4] *= v_r / L_i;
+    
     //Tile storage
     //ans[6] = q_in;
     //ans[7] = q_pLink;
@@ -2992,6 +3019,81 @@ void LinearHillslope_MonthlyEvap_OnlyRouts(double t, const double * const y_i, u
 }
 
 
+//Type 695
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5 
+void LinearHillslope_distParam_OnlyRouts(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = params[4];
+
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[1];
+    double invtau = params[5];
+
+    double q = y_i[0];		                                        // [m^3/s]
+	double s_p = y_i[1];	                                        // [m]
+    double s_a = y_i[2];	                                        // [m]
+	double acc = y_i[3];	                                        // [m]
+
+	double q_rp = forcing_values[0] * (0.001 / 60.0);		        // (mm/hr -> m/min)
+	double q_pl = k2 * s_p;                                         // (1/min * m)
+	
+	double q_ra = forcing_values[1] * (0.001 / 60.0);               // (mm/hr -> m/min)
+    double q_al = k3 * s_a;                                         // (1/min * m)
+
+    //Evaporation
+    double C_a, C_T, Corr_evap;
+    double e_pot = forcing_values[2] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    if (e_pot > 0.0){
+        C_a = s_a / e_pot;
+        C_T = C_a;
+    } else {
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_a = Corr_evap * C_a * e_pot;
+	double q_parent;
+	int q_pidx;
+
+    //Discharge
+    ans[0] = -q + ((q_al + q_pl) * A_h / 60.0);
+	for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;
+	}
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+	ans[1] = q_rp - q_pl;
+	
+	//Sub-surface
+    ans[2] = q_ra - q_al - e_a;	
+
+	//Accumulated precip
+	ans[3] = q_rp + q_ra;
+
+    /*
+    if (t < 0.030) {
+        printf("time: %f\n", t);
+    } else if ((t > 0.030) && (t < 0.035)) {
+        printf("time: %f\n", t);
+        printf(" forc: %f %f %f\n", forcing_values[0], forcing_values[1], forcing_values[2]);
+        printf(" semi: %f %f\n", q_rp, q_ra);
+        printf(" flux: %f %f\n", ans[1], ans[2]);
+        printf(" state: %f %f %f %f\n", q, s_p, s_a, acc);
+    }
+    */
+}
 //Type 196
 //Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
 //The numbering is:	0   1   2   3  4    5    6   7

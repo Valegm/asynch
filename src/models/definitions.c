@@ -300,6 +300,18 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
     //--------------------------------------------------------------------------------------------
+    case 695:	num_global_params = 1;
+        globals->uses_dam = 0;
+        globals->num_params = 8;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 8;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 3;
+        globals->min_error_tolerances = 3;
+        break;
+    //--------------------------------------------------------------------------------------------
     case 196:	num_global_params = 5;
         globals->uses_dam = 0;
         globals->num_params = 6;
@@ -431,7 +443,7 @@ case 20:	num_global_params = 9;
         globals->num_disk_params = 18;
         globals->convertarea_flag = 0;
         globals->num_forcings = 3;
-        globals->min_error_tolerances = 3;
+        globals->min_error_tolerances = 4;
         break;
 
     case 609:	num_global_params = 1;
@@ -784,7 +796,7 @@ void ConvertParams(
         params[1] *= 1000;	//L: km -> m
         params[2] *= 1e6;	//A_h: km^2 -> m^2
     }
-    else if (model_uid == 190 || model_uid == 191 || model_uid == 192 || model_uid == 195 || model_uid == 196)
+    else if (model_uid == 190 || model_uid == 191 || model_uid == 192 || model_uid == 195 || model_uid == 196 || model_uid == 695)
     {
         params[1] *= 1000;	//L: km -> m
         params[2] *= 1e6;	//A_h: km^2 -> m^2
@@ -1253,6 +1265,21 @@ void InitRoutines(
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
     }
+	else if (model_uid == 695)
+    {
+        link->dim = 4;
+        link->no_ini_start = 3;
+        link->diff_start = 0;
+
+        link->num_dense = 1;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+
+        link->differential = &LinearHillslope_distParam_OnlyRouts;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
 	else if (model_uid == 196)
 	{
 		link->dim = 5;
@@ -1430,8 +1457,8 @@ void InitRoutines(
 
     else if (model_uid == 608)
     {
-        link->dim = 7;
-        link->no_ini_start = link->dim;
+        link->dim = 5;
+        link->no_ini_start = 5;//link->dim;
         link->diff_start = 0;
 
         link->num_dense = 1;
@@ -1994,6 +2021,27 @@ void Precalculations(
         vals[4] = k3;                                                   // [1/min]  k3
         vals[5] = 60.0*v_r*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	// [1/min]  invtau
     }
+	else if (model_uid == 695)
+    {
+        //Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+        //The numbering is:	0   1   2   3  4    5    6   7
+        //Order of global_params: v_r,lambda_1,lambda_2,v_h,k_3 (,v_B)
+        //The numbering is:        0      1        2     3   4     5
+        double* vals = params;
+        double A_i = params[0];
+        double L_i = params[1];
+        double A_h = params[2];
+        double v_r = params[3];
+        double lambda_1 = params[4];
+        double lambda_2 = params[5];
+        double v_h = params[6];
+        double k3 = params[7];
+
+        vals[3] = v_h * L_i / A_h * 60.0;	                            // [1/min]  k2
+        vals[1] = k3;                                                  // [1/min]  k3
+        vals[5] = 60.0*v_r*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	// [1/min]  invtau
+    }
+
     else if (model_uid == 196)
     {
         //Order of parameters: A_i,L_i,A_h,k_2,k_3,invtau,c_1,c_2
@@ -2551,9 +2599,11 @@ void Precalculations(
         double lambda_1 = params[15];
         double lambda_2 = params[16];
         double v0 = params[17];
-        
+        //double expo = params[18];
+
         vals[16] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
         vals[17] = v_r * (L_i / A_h) * 60; // [1/min] runoff speed.
+        //vals[17] = v_r * (0.0008) * 60; // [1/min] runoff speed.
     }
 
     else if (model_uid == 609)
