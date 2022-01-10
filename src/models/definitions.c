@@ -567,6 +567,17 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 7;
         break;
         //--------------------------------------------------------------------------------------------
+    case 900:	num_global_params = 12;
+        globals->uses_dam = 0;
+        globals->num_params = 8;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 3;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 3;
+        globals->min_error_tolerances = 7;
+        break;
     case 255:	num_global_params = 3;
         globals->uses_dam = 1;
         globals->num_params = 16;
