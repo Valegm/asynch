@@ -1093,18 +1093,18 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
 {
     unsigned short i;
     double k2 = global_params[0];
-    double C10 = global_params[1];
-    double C01 = global_params[2];
-    double C20 = global_params[3];
-    double C02 = global_params[5];
-    double C11 = global_params[6];
-    double D10 = global_params[7];
-    double D01 = global_params[8];
-    double D20 = global_params[9];
-    double D02 = global_params[10];
-    double D11 = global_params[11];
-    double Hb = global_params[12]; // set to 0.7m    
-    double invtau = params[5];    
+    double C10 = global_params[4];
+    double C01 = global_params[5];
+    double C20 = global_params[6];
+    double C02 = global_params[7];
+    double C11 = global_params[8];
+    double D10 = global_params[9];
+    double D01 = global_params[10];
+    double D20 = global_params[11];
+    double D02 = global_params[12];
+    double D11 = global_params[13];
+    double Hb = global_params[14]; // set to 0.7m    
+    double invtau = params[4];    
     double Ah = params[2];
     //Variables
     double q = y_i[0];		                                        // [m^3/s]

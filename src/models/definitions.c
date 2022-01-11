@@ -519,6 +519,18 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
 
+    case 902:	num_global_params = 15;
+        globals->uses_dam = 0;
+        globals->num_params = 15;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 3;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 2;
+        globals->min_error_tolerances = 3;
+        break;
+
     case 250:	num_global_params = 9;
         globals->uses_dam = 0;
         globals->num_params = 9;
@@ -940,6 +952,11 @@ void ConvertParams(
         params[2] *= 1e6; // Ah: km^2 -> m^2
     }
     else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610)
+    {
+        params[1] *= 1000; //L: km -> m
+        params[2] *= 1e6; // Ah: km^2 -> m^2
+    } 
+    else if (model_uid == 902)
     {
         params[1] *= 1000; //L: km -> m
         params[2] *= 1e6; // Ah: km^2 -> m^2
@@ -1614,6 +1631,21 @@ void InitRoutines(
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_4States;
         //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
+
+    else if (model_uid == 902)
+    {
+        link->dim = 3;
+        link->no_ini_start = 3; //link->dim;
+        link->diff_start = 0;
+
+        link->num_dense = 1;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+        link->differential = &Universal_PolOrder2;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
     }
 
     else if (model_uid == 250)
@@ -2844,6 +2876,20 @@ void Precalculations(
        // vals[12] = 60.0*v_0*pow(A_i, lambda_2)/((1.0 - lambda_1)*L_i);//[1/min]  invtau
        // vals[13] = A_h / 60.0;                                            // c_2
     }
+
+    else if (model_uid == 902)
+    { 
+        double* vals = params;
+        double A_i = params[0];
+        double L_i = params[1];
+        double A_h = params[2];
+        double v0 = global_params[1];
+        double lambda_1 = global_params[2];
+        double lambda_2 = global_params[3];
+        //Pre computed parameters
+        vals[3] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+    }
+
 
     if (model_uid == 250)
     {
