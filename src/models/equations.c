@@ -1105,7 +1105,8 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     double D11 = global_params[13];
     double Hb = global_params[14]; // set to 0.7m    
     double invtau = params[4];    
-    double Ah = params[2];
+    double A_h = params[2];
+    double lambda_1 = global_params[2];
     //Variables
     double q = y_i[0];		                                        // [m^3/s]
     double s_p = y_i[1];	                                        // [m]    
@@ -1121,8 +1122,9 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     double q_ps = D10*ss_p + D01*ss_s + D20 * pow(ss_p, 2) + D02 * pow(ss_s, 2) + D11 * ss_p * ss_s;
     //linear subsurface flow
     double q_sl = k2*ss_s;
-
     //Discharge
+    double q_parent;
+	int q_pidx;
     ans[0] = -q + ((q_pl*Hb + q_sl*Hb) * A_h / 60.0);
 	for (i = 0; i < num_parents; i++) {
 		q_pidx = i * dim;
