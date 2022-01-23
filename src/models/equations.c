@@ -1131,6 +1131,7 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
 		q_parent = y_p[q_pidx];
 		ans[0] += q_parent;
 	}
+    //Note: Remember to add the subsurface flow trak in the channel so we can estimate the RC after the event
     //Channel
     ans[0] = invtau * pow(q, lambda_1) * ans[0];
     //Ponded
