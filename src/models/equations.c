@@ -1137,7 +1137,7 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     //Top Soil Layer
     ans[2] = q_ps - q_sl;	    
     //cum rainfall 
-    ans[4] = q_in;
+    ans[3] = q_in;
 } 
 
 
