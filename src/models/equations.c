@@ -1085,25 +1085,26 @@ void Variable_TopLayer(double t, const double * const y_i, unsigned int dim, con
 
 }
 
-//Universal model V1
+//Universal model V1 (902)
 //This model only has ponded and subsurface states. The flows from the ponded to the link and to the 
 //subsurface are calculated using a second order polynomial function. Each function is controlled by a set 
 //of 5 coefficients and the independent variables are the ponded storage (Sp) and the subsurface storage (Ss).
 void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
 {
     unsigned short i;
-    double k2 = global_params[0];
-    double C10 = global_params[4];
-    double C01 = global_params[5];
-    double C20 = global_params[6];
-    double C02 = global_params[7];
-    double C11 = global_params[8];
-    double D10 = global_params[9];
-    double D01 = global_params[10];
-    double D20 = global_params[11];
-    double D02 = global_params[12];
-    double D11 = global_params[13];
     double Hb = global_params[14]; // set to 0.7m    
+    double k2 = global_params[0];
+    double C10 = global_params[4]/Hb; // values when equal to 1 divided by Hb
+    double C01 = global_params[5]/Hb; //Move this to the definition of the model
+    double C20 = global_params[6]/pow(Hb,2); // Divided by Hb**2
+    double C02 = global_params[7]/pow(Hb,2);
+    double C11 = global_params[8]/pow(Hb,2);
+    double D10 = global_params[9]/Hb;
+    double D01 = global_params[10]/Hb;
+    double D20 = global_params[11]/pow(Hb,2);
+    double D02 = global_params[12]/pow(Hb,2);
+    double D11 = global_params[13]/pow(Hb,2);
+    
     double invtau = params[4];    
     double A_h = params[2];
     double lambda_1 = global_params[2];
@@ -1114,18 +1115,15 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     //Fluxes
     double q_in = forcing_values[0] * (0.001/60);	//[m/min]
 
-    //Dimensionless variables this is to keep the coefficients between 0 and 1
-    double ss_p = s_p / Hb;
-    double ss_s = s_s / Hb;
     //Polynomial interactions 
-    double q_pl = C10*ss_p + C01*ss_s + C20 * pow(ss_p, 2) + C02 * pow(ss_s, 2) + C11 * ss_p * ss_s;
-    double q_ps = D10*ss_p + D01*ss_s + D20 * pow(ss_p, 2) + D02 * pow(ss_s, 2) + D11 * ss_p * ss_s;
+    double q_pl = C10*s_p + C01*s_s + C20 * pow(s_p, 2) + C02 * pow(s_s, 2) + C11 * s_p * s_s;
+    double q_ps = D10*s_p + D01*s_s + D20 * pow(s_p, 2) + D02 * pow(s_s, 2) + D11 * s_p * s_s;
     //linear subsurface flow
-    double q_sl = k2*ss_s;
+    double q_sl = k2*s_s;
     //Discharge
     double q_parent;
 	int q_pidx;
-    ans[0] = -q + ((q_pl*Hb + q_sl*Hb) * A_h / 60.0);
+    ans[0] = -q + ((q_pl + q_sl) * A_h / 60.0);
 	for (i = 0; i < num_parents; i++) {
 		q_pidx = i * dim;
 		q_parent = y_p[q_pidx];
@@ -1135,9 +1133,9 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     //Channel
     ans[0] = invtau * pow(q, lambda_1) * ans[0];
     //Ponded
-    ans[1] = q_in - q_pl*Hb - q_ps*Hb;
+    ans[1] = q_in - q_pl - q_ps;
     //Top Soil Layer
-    ans[2] = q_ps*Hb - q_sl*Hb;	    
+    ans[2] = q_ps - q_sl;	    
 
 } 
 
