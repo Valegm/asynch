@@ -1105,7 +1105,7 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     double D02 = global_params[12]/pow(Hb,2);
     double D11 = global_params[13]/pow(Hb,2);
     
-    double invtau = params[4];    
+    double invtau = params[3];    
     double A_h = params[2];
     double lambda_1 = global_params[2];
     //Variables
