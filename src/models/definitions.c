@@ -1635,8 +1635,8 @@ void InitRoutines(
 
     else if (model_uid == 902)
     {
-        link->dim = 3;
-        link->no_ini_start = 3; //link->dim;
+        link->dim = 4;
+        link->no_ini_start = 4; //link->dim;
         link->diff_start = 0;
 
         link->num_dense = 1;
