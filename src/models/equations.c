@@ -1085,11 +1085,11 @@ void Variable_TopLayer(double t, const double * const y_i, unsigned int dim, con
 
 }
 
-//Universal model V1 (902)
+//Universal4Layers (902)
 //This model only has ponded and subsurface states. The flows from the ponded to the link and to the 
 //subsurface are calculated using a second order polynomial function. Each function is controlled by a set 
 //of 5 coefficients and the independent variables are the ponded storage (Sp) and the subsurface storage (Ss).
-void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+void Universal4Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
 {
     unsigned short i;
     double Hb = global_params[14]; // set to 0.7m    
@@ -1109,17 +1109,22 @@ void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, c
     double A_h = params[2];
     double lambda_1 = global_params[2];
     //Variables
-    double q = y_i[0];		                                        // [m^3/s]
-    double s_p = y_i[1];	                                        // [m]    
-    double s_s = y_i[2];
+    double q = y_i[0];		                        // [m^3/s]
+    double s_1 = y_i[1];	                        // [m]    
+    double s_2 = y_i[2];                            // [m]    
+    double s_3 = y_i[3];
+    double s_4 = y_i[4];
     //Fluxes
-    double q_in = forcing_values[0] * (0.001/60);	//[m/min]
+    double q_in = forcing_values[0] * (0.001/60);	//[m/min] rainfall
+    double q_out = forcing_values[1] * (0.001/60);	//[m/min] evaporation
 
-    //Polynomial interactions 
-    double q_pl = C10*s_p + C01*s_s + C20 * pow(s_p, 2) + C02 * pow(s_s, 2) + C11 * s_p * s_s;
-    double q_ps = D10*s_p + D01*s_s + D20 * pow(s_p, 2) + D02 * pow(s_s, 2) + D11 * s_p * s_s;
-    //linear subsurface flow
-    double q_sl = k2*s_s;
+    //Vertical fluxes
+    double q_12 = k1 * pow(s_1/d_1, a1) * pow(1-(s_2/d_2), b1);
+    double q_23 = k2 * pow(s_2/d_2, a2) * pow(1-(s_3/d_3), b2) * pow(s_1/d_1,r2);
+    double q_34 = k3 * pow(s_3/d_3, a3) * pow(1-(s_4/d_4), b3) * pow((s_1/d_1) + (s_2/d_2),r3);    
+    //Horizontal fluxes
+    double q_1L = L1 * pow(s_1/d_1, c1);
+    double q_2L = L2 * pow(s_2/d_2, c2) * ;
     //Discharge
     double q_parent;
 	int q_pidx;
