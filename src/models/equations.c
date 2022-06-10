@@ -1085,64 +1085,86 @@ void Variable_TopLayer(double t, const double * const y_i, unsigned int dim, con
 
 }
 
-//Universal4Layers (902)
+double universal_vertical_flow(double s_i, double s_j, double s_sum, double d_sum, double k, double a_v, double b_v, double r_v, double d_i, double d_j){
+    double qij = k * pow(s_i/d_i, a_v) * pow(1-(s_j/d_j), b_v) * pow((s_sum/d_sum),r_v);
+    return qij;
+}
+    
+double universal_lateral_flow(double s_i, double s_sum, double d_sum, double k, double a_i, double r_i, double d_i){
+    double qiL = k * pow(s_i/d_i, a_i) * pow((s_sum/d_sum),r_i);
+    return qiL;
+}
+
+//Universal6Layers (902)
 //This model only has ponded and subsurface states. The flows from the ponded to the link and to the 
 //subsurface are calculated using a second order polynomial function. Each function is controlled by a set 
 //of 5 coefficients and the independent variables are the ponded storage (Sp) and the subsurface storage (Ss).
-void Universal4Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
 {
-    unsigned short i;
-    double Hb = global_params[14]; // set to 0.7m    
-    double k2 = global_params[0];
-    double C10 = global_params[4]/Hb; // values when equal to 1 divided by Hb
-    double C01 = global_params[5]/Hb; //Move this to the definition of the model
-    double C20 = global_params[6]/pow(Hb,2); // Divided by Hb**2
-    double C02 = global_params[7]/pow(Hb,2);
-    double C11 = global_params[8]/pow(Hb,2);
-    double D10 = global_params[9]/Hb;
-    double D01 = global_params[10]/Hb;
-    double D20 = global_params[11]/pow(Hb,2);
-    double D02 = global_params[12]/pow(Hb,2);
-    double D11 = global_params[13]/pow(Hb,2);
-    
+    unsigned short i,j, count;
+    //Routing parameters
     double invtau = params[3];    
     double A_h = params[2];
     double lambda_1 = global_params[2];
-    //Variables
-    double q = y_i[0];		                        // [m^3/s]
-    double s_1 = y_i[1];	                        // [m]    
-    double s_2 = y_i[2];                            // [m]    
-    double s_3 = y_i[3];
-    double s_4 = y_i[4];
+    //Read parameters of the fluxes in a matrix i are the storges and j the param
+    //j from 0 to 7 are: kv, av, bv, rv, kh, ah, rh, d
+    double CC[dim][8] = 0;
+    count = 0;
+    for (i = 0; i<dim; i++){
+        for (j = 0; j<8; j++){
+            CC[i][j] = params[3+count];
+            count++;
+        }
+    }
+    //Set the storages, first is channel [m3/s], remaining are hillslope [m]
+    double S[dim] = 0;
+    for (i = 0; i<dim; i++){
+        S[i] = y_i[i];
+    }
+    //Forcings
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[m/min] evaporation    
     //Fluxes
-    double q_in = forcing_values[0] * (0.001/60);	//[m/min] rainfall
-    double q_out = forcing_values[1] * (0.001/60);	//[m/min] evaporation
-
-    //Vertical fluxes
-    double q_12 = k1 * pow(s_1/d_1, a1) * pow(1-(s_2/d_2), b1);
-    double q_23 = k2 * pow(s_2/d_2, a2) * pow(1-(s_3/d_3), b2) * pow(s_1/d_1,r2);
-    double q_34 = k3 * pow(s_3/d_3, a3) * pow(1-(s_4/d_4), b3) * pow((s_1/d_1) + (s_2/d_2),r3);    
-    //Horizontal fluxes
-    double q_1L = L1 * pow(s_1/d_1, c1);
-    double q_2L = L2 * pow(s_2/d_2, c2) * ;
+    double qv[dim+1] = 0;
+    double qh[dim-1] = 0;
+    double etC[dim-1] = 0; //Et coefficient 
+    double et;
+    double Ssum = 0; 
+    double Dsum = 1; // Starts in one to avoid division by zero
+    double ESum = 0;
+    double qhL = 0;
+    qv[0] = forcing_values[0] * (0.001/60); // rainfall [m/min]
+    qv[dim] = 0; // No losses from the system
+    for (i = 1; i<dim; i++){
+        //Vertical flow
+        if (i<dim-1) qv[i] = universal_vertical_flow(S[i], S[i+1], Ssum, Dsum, CC[i][0], CC[i][1], CC[i][2], CC[i][3], CC[i][7], CC[i+1][7]);
+        //Lateral flow
+        qh[i-1] = universal_lateral_flow(S[i], Ssum, Dsum, CC[i][4], CC[i][5], CC[i][6], CC[i][7]);
+        // Total lateral flow [m / min]
+        qhL += qh[i-1]; 
+        //Updates the sum of the storage [m]
+        Ssum += S[i]; 
+        //Update the total Depth [m]        
+        if (i==1) Dsum -= 1; //Takes the one that avoids the division by zero
+        Dsum += CC[i][7];
+        //Computes the evaporation coefficient [adim]
+        etC[i-1] = S[i] / CC[i][7]; 
+        Esum += etC[i-1];
+    }
+    //Updates storages starting from the ponded and ending in the last layer
+    for (i = 1; i<dim; i++){
+        et = (etC[i-1] * e_pot) / Esum;
+        ans[i] = qv[i-1] - qv[i] - qh[i-1] - et;
+    }
     //Discharge
     double q_parent;
 	int q_pidx;
-    ans[0] = -q + ((q_pl + q_sl) * A_h / 60.0);
+    ans[0] = -S[0] + ((qhL) * A_h / 60.0);
 	for (i = 0; i < num_parents; i++) {
 		q_pidx = i * dim;
 		q_parent = y_p[q_pidx];
 		ans[0] += q_parent;
 	}
-    //Note: Remember to add the subsurface flow trak in the channel so we can estimate the RC after the event
-    //Channel
-    ans[0] = invtau * pow(q, lambda_1) * ans[0];
-    //Ponded
-    ans[1] = q_in - q_pl - q_ps;
-    //Top Soil Layer
-    ans[2] = q_ps - q_sl;	    
-    //cum rainfall 
-    ans[3] = q_in;
+    ans[0] = invtau * pow(S[0], lambda_1) * ans[0];
 } 
 
 

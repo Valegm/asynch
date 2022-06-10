@@ -1635,14 +1635,14 @@ void InitRoutines(
 
     else if (model_uid == 902)
     {
-        link->dim = 4;
-        link->no_ini_start = 4; //link->dim;
+        link->dim = 6;
+        link->no_ini_start = 6; //link->dim;
         link->diff_start = 0;
 
         link->num_dense = 1;
         link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
         link->dense_indices[0] = 0;
-        link->differential = &Universal_PolOrder2;
+        link->differential = &Universal6Layers;
         link->algebraic = NULL;
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;

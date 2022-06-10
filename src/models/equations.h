@@ -103,7 +103,9 @@ void ActiveLayerSnow(double t, const double * const y_i, unsigned int dim, const
 void ActiveLayerSnow_Reservoir(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
 
 //Universal model Family the 9XX family
-void Universal_PolOrder2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
+void Universal6Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
+double universal_vertical_flow(double k, double s_i, double d_i, double a_i, double s_j, double d_j, double b_j, double s_sum, double d_sum, double r_sum);
+double universal_lateral_flow(double k, double s_i, double d_i, double a_i, double s_sum, double d_sum, double r_sum);
 
 //Misc Models
 void lcuencas_soilrain(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
