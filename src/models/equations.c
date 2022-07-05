@@ -1116,7 +1116,7 @@ void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, co
             count++;
         }
     }
-    //Set the storages, first is channel [m3/s], remaining are hillslope [m]
+    //Set the storages, first is channel [m3/s], remaining are hillslope storages [m]
     double S[dim] = 0;
     for (i = 0; i<dim; i++){
         S[i] = y_i[i];
@@ -1147,7 +1147,8 @@ void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, co
         if (i==1) Dsum -= 1; //Takes the one that avoids the division by zero
         Dsum += CC[i][7];
         //Computes the evaporation coefficient [adim]
-        etC[i-1] = S[i] / CC[i][7]; 
+        etC[i-1] = S[i] / CC[i][7];  // The weight of each layer depends only on that layer depth.
+        //etC[i-1] = S[i] / Dsum; // The weight decreases for deeper layers.  
         Esum += etC[i-1];
     }
     //Updates storages starting from the ponded and ending in the last layer
