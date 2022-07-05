@@ -1496,7 +1496,7 @@ void model253(double t, const double * const y_i, unsigned int dim, const double
     double q_sl = k_3 * s_s;	//[m/min]
 
                                 //Discharge
-    ans[0] = -q + (q_pl + q_sl) * c_2;
+    ans[0] = (q_pl + q_sl) * c_2 - q;
     for (i = 0; i<num_parents; i++)
         ans[0] += y_p[i * dim];
     ans[0] = invtau * pow(q, lambda_1) * ans[0];
@@ -1636,7 +1636,7 @@ void model255(double t, const double * const y_i, unsigned int dim, const double
     double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
     if (e_pot > 0.0 && Corr > 1e-12)
     {
-        e_p = s_p * 1e3 * e_pot / Corr;
+        e_p = s_p * e_pot / Corr;
         e_t = s_t / S_L * e_pot / Corr;
         e_s = s_s / (h_b - S_L) * e_pot / Corr;
     }
