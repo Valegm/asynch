@@ -519,9 +519,9 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
 
-    case 902:	num_global_params = 15;
+    case 902:	num_global_params = 51;
         globals->uses_dam = 0;
-        globals->num_params = 15;
+        globals->num_params = 4;
         globals->dam_params_size = 0;
         globals->area_idx = 0;
         globals->areah_idx = 2;
