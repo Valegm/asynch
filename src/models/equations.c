@@ -1099,7 +1099,7 @@ double universal_lateral_flow(double s_i, double s_sum, double d_sum, double k, 
 //This model only has ponded and subsurface states. The flows from the ponded to the link and to the 
 //subsurface are calculated using a second order polynomial function. Each function is controlled by a set 
 //of 5 coefficients and the independent variables are the ponded storage (Sp) and the subsurface storage (Ss).
-void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+void Universal6Layers(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
 {
     unsigned short i,j, count;
     //Routing parameters
@@ -1108,8 +1108,7 @@ void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, co
     double lambda_1 = global_params[2];
     //Read parameters of the fluxes in a matrix i are the storges and j the param
     //j from 0 to 7 are: kv, av, bv, rv, kh, ah, rh, d
-    double CC[dim][8];
-    CC[dim][8] = 0;
+    double CC[6][8];
     count = 0;
     for (i = 0; i<dim; i++){
         for (j = 0; j<8; j++){
@@ -1118,24 +1117,24 @@ void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, co
         }
     }
     //Set the storages, first is channel [m3/s], remaining are hillslope storages [m]
-    double S[dim] = 0;
+    double S[6]={0,0,0,0,0,0};
     for (i = 0; i<dim; i++){
         S[i] = y_i[i];
     }
     //Forcings
     double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[m/min] evaporation    
     //Fluxes
-    double qv[dim+1] = 0;
-    double qh[dim-1] = 0;
-    double etC[dim-1] = 0; //Et coefficient 
+    double qv[7] = {0,0,0,0,0,0,0};
+    double qh[5] = {0,0,0,0,0};
+    double etC[5] = {0,0,0,0,0}; //Et coefficient     
     double et;
     double Ssum = 0; 
     double Dsum = 1; // Starts in one to avoid division by zero
-    double ESum = 0;
+    double Esum = 0;
     double qhL = 0;
     qv[0] = forcing_values[0] * (0.001/60); // rainfall [m/min]
-    qv[dim] = 0; // No losses from the system
-    for (i = 1; i<dim; i++){
+    qv[6] = 0; // No losses from the system
+    for (i = 1; i<(int)dim; i++){
         //Vertical flow
         if (i<dim-1) qv[i] = universal_vertical_flow(S[i], S[i+1], Ssum, Dsum, CC[i][0], CC[i][1], CC[i][2], CC[i][3], CC[i][7], CC[i+1][7]);
         //Lateral flow
