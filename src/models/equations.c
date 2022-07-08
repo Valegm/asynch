@@ -1108,7 +1108,8 @@ void Universal_N_Layers(double t, const double * const y_i, unsigned int dim, co
     double lambda_1 = global_params[2];
     //Read parameters of the fluxes in a matrix i are the storges and j the param
     //j from 0 to 7 are: kv, av, bv, rv, kh, ah, rh, d
-    double CC[dim][8] = 0;
+    double CC[dim][8];
+    CC[dim][8] = 0;
     count = 0;
     for (i = 0; i<dim; i++){
         for (j = 0; j<8; j++){
