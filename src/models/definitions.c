@@ -519,7 +519,7 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
 
-    case 902:	num_global_params = 51;
+    case 902:	num_global_params = 43;
         globals->uses_dam = 0;
         globals->num_params = 4;
         globals->dam_params_size = 0;
@@ -527,8 +527,8 @@ case 20:	num_global_params = 9;
         globals->areah_idx = 2;
         globals->num_disk_params = 3;
         globals->convertarea_flag = 0;
-        globals->num_forcings = 1;
-        globals->min_error_tolerances = 3;
+        globals->num_forcings = 3;
+        globals->min_error_tolerances = 4;
         break;
 
     case 250:	num_global_params = 9;
@@ -2883,9 +2883,9 @@ void Precalculations(
         double A_i = params[0];
         double L_i = params[1];
         double A_h = params[2];
-        double v0 = global_params[1];
-        double lambda_1 = global_params[2];
-        double lambda_2 = global_params[3];
+        double v0 = global_params[0];
+        double lambda_1 = global_params[1];
+        double lambda_2 = global_params[2];
         //Pre computed parameters
         vals[3] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
     }

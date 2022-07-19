@@ -1085,13 +1085,13 @@ void Variable_TopLayer(double t, const double * const y_i, unsigned int dim, con
 
 }
 
-double universal_vertical_flow(double s_i, double s_j, double s_sum, double d_sum, double k, double a_v, double b_v, double r_v, double d_i, double d_j){
-    double qij = k * pow(s_i/d_i, a_v) * pow(1-(s_j/d_j), b_v) * pow((s_sum/d_sum),r_v);
+double universal_vertical_flow(double s_i, double s_j, double s_sum, double d_sum, double k_v, double a_v, double b_v, double r_v, double d_i, double d_j){
+    double qij = k_v * pow(s_i/d_i, a_v) * pow(1-(s_j/d_j), b_v) * pow((s_sum/d_sum),r_v);
     return qij;
 }
     
-double universal_lateral_flow(double s_i, double s_sum, double d_sum, double k, double a_i, double r_i, double d_i){
-    double qiL = k * pow(s_i/d_i, a_i) * pow((s_sum/d_sum),r_i);
+double universal_lateral_flow(double s_i, double s_sum, double d_sum, double k_h, double a_i, double r_i, double d_i){
+    double qiL = k_h * pow(s_i/d_i, a_i) * pow((s_sum/d_sum),r_i);
     return qiL;
 }
 
@@ -1103,28 +1103,28 @@ void Universal6Layers(double t, const double * const y_i, unsigned int dim, cons
 {
     unsigned short i,j, count;
     //Routing parameters
-    double invtau = params[3];    
+    double invtau = params[0];    
     double A_h = params[2];
     double lambda_1 = global_params[2];
     //Read parameters of the fluxes in a matrix i are the storges and j the param
     //j from 0 to 7 are: kv, av, bv, rv, kh, ah, rh, d
-    double CC[6][8];
+    double CC[5][8];
     count = 0;
-    for (i = 0; i<dim; i++){
+    for (i = 0; i<5; i++){
         for (j = 0; j<8; j++){
-            CC[i][j] = params[3+count];
+            CC[i][j] = global_params[3+count];
             count++;
         }
     }
     //Set the storages, first is channel [m3/s], remaining are hillslope storages [m]
     double S[6]={0,0,0,0,0,0};
-    for (i = 0; i<dim; i++){
+    for (i = 0; i<6; i++){
         S[i] = y_i[i];
     }
     //Forcings
     double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[m/min] evaporation    
     //Fluxes
-    double qv[7] = {0,0,0,0,0,0,0};
+    double qv[6] = {0,0,0,0,0,0};
     double qh[5] = {0,0,0,0,0};
     double etC[5] = {0,0,0,0,0}; //Et coefficient     
     double et;
@@ -1133,28 +1133,40 @@ void Universal6Layers(double t, const double * const y_i, unsigned int dim, cons
     double Esum = 0;
     double qhL = 0;
     qv[0] = forcing_values[0] * (0.001/60); // rainfall [m/min]
-    qv[6] = 0; // No losses from the system
-    for (i = 1; i<(int)dim; i++){
-        //Vertical flow
-        if (i<dim-1) qv[i] = universal_vertical_flow(S[i], S[i+1], Ssum, Dsum, CC[i][0], CC[i][1], CC[i][2], CC[i][3], CC[i][7], CC[i+1][7]);
-        //Lateral flow
-        qh[i-1] = universal_lateral_flow(S[i], Ssum, Dsum, CC[i][4], CC[i][5], CC[i][6], CC[i][7]);
-        // Total lateral flow [m / min]
-        qhL += qh[i-1]; 
-        //Updates the sum of the storage [m]
-        Ssum += S[i]; 
-        //Update the total Depth [m]        
-        if (i==1) Dsum -= 1; //Takes the one that avoids the division by zero
-        Dsum += CC[i][7];
-        //Computes the evaporation coefficient [adim]
-        etC[i-1] = S[i] / CC[i][7];  // The weight of each layer depends only on that layer depth.
-        //etC[i-1] = S[i] / Dsum; // The weight decreases for deeper layers.  
-        Esum += etC[i-1];
+    qv[5] = 0; // No losses from the system
+    for (i = 1; i<6; i++){
+        //if (CC[i-1][0] != 0.0) {
+             //Vertical flow
+            if (i<5 && CC[i-1][0] != 0.0){
+                qv[i] = universal_vertical_flow(S[i], S[i+1], Ssum, Dsum, CC[i-1][0], CC[i-1][1], CC[i-1][2], CC[i-1][3], CC[i-1][7], CC[i][7]);
+                //qv[i] = CC[i-1][0] * S[i];
+                //qij = k_v * pow(s_i/d_i, a_v)
+            } 
+            //Lateral flow
+            if (CC[i-1][4] != 0.0){
+                qh[i-1] = universal_lateral_flow(S[i], Ssum, Dsum, CC[i-1][4], CC[i-1][5], CC[i-1][6], CC[i-1][7]);
+                //qh[i-1] = CC[i-1][4] * S[i];
+                //qiL = k_h * pow(s_i/d_i, a_i)
+            } 
+            // Total lateral flow [m / min]
+            qhL += qh[i-1]; 
+            //Updates the sum of the storage [m]
+            Ssum += S[i]; 
+            //Update the total Depth [m]        
+            if (i==1) Dsum -= 1; //Takes the one that avoids the division by zero            
+            Dsum += CC[i-1][7];            
+            //Computes the evaporation coefficient [adim]
+            //etC[i-1] = S[i] / CC[i-1][7];  // The weight of each layer depends only on that layer depth.
+            //etC[i-1] = S[i] / Dsum; // The weight decreases for deeper layers.  
+            //Esum += etC[i-1];
+        //}
     }
     //Updates storages starting from the ponded and ending in the last layer
-    for (i = 1; i<dim; i++){
-        et = (etC[i-1] * e_pot) / Esum;
-        ans[i] = qv[i-1] - qv[i] - qh[i-1] - et;
+    for (i = 1; i<6; i++){
+        //if (CC[i-1][0] != 0.0) {
+            //et = (etC[i-1] * e_pot) / Esum;
+            ans[i] = qv[i-1] - qv[i] - qh[i-1];// - et;
+        //}
     }
     //Discharge
     double q_parent;
