@@ -766,11 +766,11 @@ case 20:	num_global_params = 9;
 	case 612://tetis01
 		num_global_params = 13;
 		globals->uses_dam = 0;
-		globals->num_params = 7;
+		globals->num_params = 9;
 		globals->dam_params_size = 0;
 		globals->area_idx = 0;
 		globals->areah_idx = 2;
-		globals->num_disk_params = 3;
+		globals->num_disk_params = 5;
 		globals->convertarea_flag = 0;
 		globals->num_forcings = 5;
 		globals->min_error_tolerances = 7; //as many as states
@@ -3278,21 +3278,22 @@ void Precalculations(
 		double A_i = params[0]; //upstream area of the hillslope
 		double L_i = params[1];	// channel lenght
 		double A_h = params[2]; //area of the hillslope
-
+        double Hu = params[3]; //max available storage static storage [mm]
+        double infiltration = params[4]; //infiltration rate [mm/hr]
 
 		double v_0 = global_params[0]; //velocity river in channels [m/s]
 		double lambda_1 = global_params[1]; //power discharge in routing function
 		double lambda_2 = global_params[2]; //power of area in routing function
-		double Hu = global_params[3]; //max available storage static storage [mm]
-		double infiltration = global_params[4]; //infiltration rate [mm/hr]
+		double c_Hu = global_params[3]; //max available storage static storage [mm]
+		double c_infiltration = global_params[4]; //infiltration rate [mm/hr]
 		double percolation = global_params[5]; //percolation rate [mm/hr]
 		double alfa2 = global_params[6]; //linear reservoir coef. surface storage [minutes]
 		double alfa3 = global_params[7]; //linear reserv. coef gravitational storage [days]
 		double alfa4 = global_params[8]; //linear reserv. coef aquifer storage [days]
-		vals[3] = 60.0 * v_0 * pow(A_i, lambda_2) / ((1.0 - lambda_1) * L_i);//[1/min]  invtau params[3]
-		vals[4] = (0.001 / 60.0);		//(mm/hr->m/min)  c_1
-		vals[5] = A_h / 60.0;	//  c_2
-        vals[6] = (L_i/A_h)*60; // c_3 [1/min] the residency time in the hillslope
+		vals[5] = 60.0 * v_0 * pow(A_i, lambda_2) / ((1.0 - lambda_1) * L_i);//[1/min]  invtau params[3]
+		vals[6] = (0.001 / 60.0);		//(mm/hr->m/min)  c_1
+		vals[7] = A_h / 60.0;	//  c_2
+        vals[8] = (L_i/A_h)*60; // c_3 [1/min] the residency time in the hillslope
 
 	} else if (model_uid == 401 || model_uid == 402) //tetis02 & 03 model
 			{

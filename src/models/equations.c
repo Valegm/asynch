@@ -2695,15 +2695,16 @@ void tetis_nicoV1(double t, \
 	    //Hillslope parameters
         double L = params[1];   // Length of the channel [m]
 	    double A_h = params[2]; //Area of the hillslopes [m^2]
-	    double c_1 = params[4]; //factor .converts [mm/hr] to [m/min]
-        double c_3 = params[6]; // hillslope residency time [s/(min*m)]        
-	    double invtau = params[3];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-	    double c_2 = params[5];// = A_h / 60.0;	//  c_2
+	    double invtau = params[5];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        double c_1 = params[6]; //factor .converts [mm/hr] to [m/min]
+        double c_2 = params[7];// = A_h / 60.0;	//  c_2
+        double c_3 = params[8]; // hillslope residency time [s/(min*m)]        	    
+	    
         //Global  parameters 
         double lambda_1 = global_params[1];
-        double Hu = (global_params[3]/1000);//*H_season_fact; //max available storage in static tank [mm] to [m]
-        double infiltration = global_params[4]*c_1; //infiltration rate [m/min]        
-        double percolation = global_params[5]*c_1; // percolation rate to aquifer [m/min]
+        double Hu = (params[3]*global_params[3]/1000);//*H_season_fact; //max available storage in static tank [mm] to [m]
+        double infiltration = params[4]*global_params[4]*c_1; //infiltration rate [m/min]        
+        double percolation = params[4]*global_params[5]*c_1; // percolation rate to aquifer [m/min]
         double alfa2 = global_params[6]; //hillslope surface reference speed [m/s].
         double alfa3 = global_params[7]; //hillslope subsurface reference speed [m/s].
         double alfa4 = global_params[8]*24*60; //residence time [days] to [min].
