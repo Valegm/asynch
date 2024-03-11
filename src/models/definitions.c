@@ -2871,7 +2871,7 @@ void Precalculations(
     { 
         double* vals = params;
         double c_depth = params[3];
-        double f_deptf = params[4];
+        double f_depth = params[4];
 
         // vals[16] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);
         // vals[17] = v_r * (L_i / A_h) * 60;
