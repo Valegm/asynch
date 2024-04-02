@@ -239,18 +239,19 @@ void distributedV1(double t, const double * const y_i, unsigned int dim, const d
     double vr = params[7];          //Runoff reference speed [ms-1]
     double ks = params[8];          //Hydraulic sat conductivity [ms-1]
     double ksa = params[9];         //Hydraulic sat conductivity of active layer [ms-1]
-    double a_pl = params[10];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
-    double a_ls = params[11];       //alpha of the topsoil to soil def=0 
-    double a_sL = params[12];       //alpha of the active def=17
-    double lambda_1 = params[13];   //routing parameter
+    double lambda_1 = params[10];   //routing parameter
     // Processed parameters
-    double invtau = params[14];     //routing parameter
-    double kp = params[15];         //ponded residency time [min-1]
+    double invtau = params[11];     //routing parameter
+    double kp = params[12];         //ponded residency time [min-1]
     //Constant parameters (calibration)
     double Cpt = global_params[0];  //Runoff and infil division def=1 [1-99]
     double Cts = global_params[1];  //Topsoil to soil flux def=1
-    double CsL = global_params[2];  //Soil to Link flux def=1
-    double Cr = global_params[4];   //Rainfall factor def=1
+    double CsLb = global_params[2];  //Soil to Link flux base def=1
+    double CsLa = global_params[3];  //Soil to Link flux active def=1
+    double a_pt = global_params[4];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[5];       //alpha of the topsoil to soil def=0 
+    double a_sL = global_params[6];       //alpha of the active def=17
+    double Cr = global_params[7];   //Rainfall factor def=1
     //Forcings
     double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
     double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]    
@@ -260,14 +261,15 @@ void distributedV1(double t, const double * const y_i, unsigned int dim, const d
     double s_t = y_i[2];                   //Ponded storage [m]
     double s_s = y_i[1];                   //Ponded storage [m]     
     //Hillslope Fluxes - Vertical p to t, t to s    
-    double pow_t = (1.0 - s_p/Tl > 0.0)? pow(1.0 - s_p/Tl,a_pl): 0.0;   //power term
+    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term
     double q_pt = (100-Cpt) * kp * (1-Ia)*pow_t-s_p;                    //ponded to topsoil
+    pow_t = (1.0 - s_s/Ts > 0.0)? pow(1.0 - s_s/Ts,a_ts): 0.0;   //power term
     double q_ts = Cts * (ks/Ts) * s_t;
     //Hillslope Fluxes - To Link (L) 
     double q_pL = Cpt * kp * s_p;                     //ponded to Link
-    double q_sL = CsL * ks * (L_i / A_h) * s_s;       //soil to Link baseflow    
+    double q_sL = CsLb * ks * (L_i / A_h) * s_s;       //soil to Link baseflow    
     if (s_s>Beta){
-        q_sL += (s_s - Beta) * ksa * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
+        q_sL += (s_s - Beta) * CsLa * ksa * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
     }           
     //Routing streamflow
     double q_parent;

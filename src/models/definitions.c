@@ -388,13 +388,13 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
 
-    case 601:	num_global_params = 5;
+    case 601:	num_global_params = 8;
         globals->uses_dam = 0;
-        globals->num_params = 16;
+        globals->num_params = 13;
         globals->dam_params_size = 0;
         globals->area_idx = 0;
         globals->areah_idx = 2;
-        globals->num_disk_params = 16;
+        globals->num_disk_params = 13;
         globals->convertarea_flag = 0;
         globals->num_forcings = 2;
         globals->min_error_tolerances = 5;
@@ -2524,14 +2524,11 @@ void Precalculations(
         double vr = params[7];          //Runoff reference speed [ms-1]
         double ks = params[8];          //Hydraulic sat conductivity [ms-1]
         double ksa = params[9];         //Hydraulic sat conductivity of active layer [ms-1]
-        double a_pl = params[10];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
-        double a_ls = params[11];       //alpha of the topsoil to soil def=0 
-        double a_sL = params[12];       //alpha of the active def=17
-        double lambda_1 = params[13];   //routing parameter
-        double lambda_2 = params[14];
-        double v0 = params[15];
-        vals[14] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[15] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
+        double lambda_1 = params[10];   //routing parameter
+        double lambda_2 = params[11];
+        double v0 = params[12];
+        vals[11] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        vals[12] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
     }
     
     else if (model_uid == 608)
