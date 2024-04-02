@@ -388,78 +388,16 @@ case 20:	num_global_params = 9;
         globals->min_error_tolerances = 3;
         break;
 
-    
-    case 601:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 14;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 15;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break;
-
-    case 602:	num_global_params = 1;
+    case 601:	num_global_params = 5;
         globals->uses_dam = 0;
         globals->num_params = 16;
         globals->dam_params_size = 0;
         globals->area_idx = 0;
         globals->areah_idx = 2;
-        globals->num_disk_params = 17;
+        globals->num_disk_params = 16;
         globals->convertarea_flag = 0;
         globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break; 
-    
-    case 603:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 20;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 21;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break;
-
-    
-    case 604:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 15;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 15;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break;
-
-    case 605:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 22;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 19;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break;
- 
-    case 606:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 18;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 18;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
+        globals->min_error_tolerances = 5;
         break;
 
     case 608:	num_global_params = 5;
@@ -494,18 +432,7 @@ case 20:	num_global_params = 9;
         globals->convertarea_flag = 0;
         globals->num_forcings = 5;
         globals->min_error_tolerances = 4;
-        break;
-    case 607:	num_global_params = 1;
-        globals->uses_dam = 0;
-        globals->num_params = 15;
-        globals->dam_params_size = 0;
-        globals->area_idx = 0;
-        globals->areah_idx = 2;
-        globals->num_disk_params = 15;
-        globals->convertarea_flag = 0;
-        globals->num_forcings = 2;
-        globals->min_error_tolerances = 3;
-        break;
+        break;    
 
     case 654:	num_global_params = 1;
         globals->uses_dam = 0;
@@ -976,13 +903,8 @@ void ConvertParams(
     {
         params[1] *= 1000;	//L: km -> m
         params[2] *= 1e6;	//A_h: km^2 -> m^2
-    }
-    else if (model_uid == 601 || model_uid == 602 || model_uid == 603 || model_uid == 604 || model_uid == 605 || model_uid == 606 || model_uid == 607)
-    {
-        params[1] *= 1000; //L: km -> m
-        params[2] *= 1e6; // Ah: km^2 -> m^2
-    }
-    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610)
+    }    
+    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610 || model_uid == 601)
     {
         params[1] *= 1000; //L: km -> m
         params[2] *= 1e6; // Ah: km^2 -> m^2
@@ -1480,105 +1402,22 @@ void InitRoutines(
     else if (model_uid == 601)
     {
         link->dim = 4;
-        link->no_ini_start = link->dim;
+        link->no_ini_start = link->dim; //link->dim;
         link->diff_start = 0;
 
         link->num_dense = 1;
         link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
         link->dense_indices[0] = 0;
-        link->differential = &VariableHillslope;
-        link->algebraic = NULL;
-        link->check_state = NULL;
-        link->check_consistency = &CheckConsistency_Nonzero_4States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-    }
-    
-
-    else if (model_uid == 602)
-    {
-        link->dim = 4;
-        link->no_ini_start = link->dim;
-        link->diff_start = 0;
-
-        link->num_dense = 1;
-        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
-        link->dense_indices[0] = 0;
-        link->differential = &VariableInterflow;
-        link->algebraic = NULL;
-        link->check_state = NULL;
-        link->check_consistency = &CheckConsistency_Nonzero_4States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-    }
-
-
-    else if (model_uid == 603)
-    {
-        link->dim = 5;
-        link->no_ini_start = link->dim;
-        link->diff_start = 0;
-
-        link->num_dense = 1;
-        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
-        link->dense_indices[0] = 0;
-        link->differential = &VariableTriLayer;
-        link->algebraic = NULL;
-        link->check_state = NULL;
-        link->check_consistency = &CheckConsistency_Nonzero_5States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-    }
-
-
-    else if (model_uid == 604)
-    {
-        link->dim = 7;
-        link->no_ini_start = link->dim;
-        link->diff_start = 0;
-
-        link->num_dense = 1;
-        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
-        link->dense_indices[0] = 0;
-        link->differential = &VariableThreshold;
+        
+        if (link->has_res)
+        { 
+            link->differential = &Tiles_Reservoirs;
+            link->solver = &ForcedSolutionSolver;
+        }
+        else    link->differential = &distributedV1;
         link->algebraic = NULL;
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-            //&CheckConsistency_Nonzero_5States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-    }
-
-
-    else if (model_uid == 605)
-    {
-        link->dim = 7;
-        link->no_ini_start = link->dim;
-        link->diff_start = 0;
-
-        link->num_dense = 1;
-        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
-        link->dense_indices[0] = 0;
-        link->differential = &VariableThreshold3;
-        link->algebraic = NULL;
-        link->check_state = NULL;
-        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-            //&CheckConsistency_Nonzero_5States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-    }
-
-    
-    else if (model_uid == 606)
-    {
-        link->dim = 7;
-        link->no_ini_start = link->dim;
-        link->diff_start = 0;
-
-        link->num_dense = 1;
-        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
-        link->dense_indices[0] = 0;
-        link->differential = &ExponentialExp;
-        link->algebraic = NULL;
-        link->check_state = NULL;
-        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
-            //&CheckConsistency_Nonzero_5States;
-        //link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
     }
 
     else if (model_uid == 608)
@@ -2671,175 +2510,30 @@ void Precalculations(
 	    vals[8] = 2.7e-8 * slope + 0.0021;				// Linslope
     	vals[9] = (vals[6] * vals[7] * exp(10 * vals[7]))/(exp(21 * vals[7]));	// aTile
 	    vals[10] = vals[6] * vals[7] * exp(10 * vals[7]) - vals[8] * vals[7];	// LinIntercept
-    }
+    }    
     else if (model_uid == 601)
-    {
-	//Order of parameters: A_i,L_i,A_h,slope,tileQ,invtau,aNo,actT,LinSl,aTile,LinIn,
-	//The numbering is:	0   1   2    3     4     5     6   7     8   9     10
-	//Order of global_params: v_r,lambda_1,lambda_2,tL,bL,kdry,ki,k2
-	//The numbering is:        0      1        2     3 4   5   6   7 
-        double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-	    double slope = params[3];
-        double v_r = params[4];
-        double a_r = params[5];
-        double v_s = params[6];
-        double a_s = params[7];
-        double k1 = params[8];
-        double k2 = params[9];
-        double t_l = params[10];
-        double b_L = params[11];
-        double lambda_1 = params[12];
-        double lambda_2 = params[13];
-        double v_0 = params[14];   
-
-        vals[13] = 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-    }
-    else if (model_uid == 602)
-    {
-	//Order of parameters: A_i,L_i,A_h,slope,tileQ,invtau,aNo,actT,LinSl,aTile,LinIn,
-	//The numbering is:	0   1   2    3     4     5     6   7     8   9     10
-	//Order of global_params: v_r,lambda_1,lambda_2,tL,bL,kdry,ki,k2
-	//The numbering is:        0      1        2     3 4   5   6   7 
-        double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-	    double slope = params[3];
-        double v_r = params[4];
-        double a_r = params[5];
-        double v_l = params[6];
-        double a_l = params[7];
-        double v_s = params[8];
-        double a_s = params[9];
-        double k1 = params[10];
-        double k2 = params[11];
-        double t_l = params[12];
-        double b_L = params[13];
-        double lambda_1 = params[14];
-        double lambda_2 = params[15];
-        double v_0 = params[16];   
-
-        vals[15] = 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-    }
-    else if (model_uid == 603)
-    {
-	//Order of parameters: A_i,L_i,A_h,slope,tileQ,invtau,aNo,actT,LinSl,aTile,LinIn,
-	//The numbering is:	0   1   2    3     4     5     6   7     8   9     10
-	//Order of global_params: v_r,lambda_1,lambda_2,tL,bL,kdry,ki,k2
-	//The numbering is:        0      1        2     3 4   5   6   7 
-        double* vals = params;
-        double Ai = params[0];
-        double Li = params[1];
-        double Ah = params[2];
-	    double slope = params[3];
-        double v1 = params[4];
-        double a1 = params[5];
-        double v2 = params[6];
-        double a2 = params[7];
-        double v3 = params[8];
-        double a3 = params[9]; 
-        double v4 = params[10];
-        double a4 = params[11];
-        double h1 = params[12];
-        double h2 = params[13];
-        double h3 = params[14];
-        double k1 = params[15];
-        double k2 = params[16];
-        double k3 = params[17];
-        double lambda1 = params[18];
-        double lambda2 = params[19];
-        double v0 = params[20];   
-
-        vals[19] = 60.0*v0*pow(Ai, lambda2) / ((1.0 - lambda1)*Li);	//[1/min]  invtau
-    }
-
-    else if (model_uid == 604)
-    {
-        double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-        double v_r = params[3];
-        double a_r = params[4];
-        double v_s1 = params[5];
-        double v_s2 = params[6];
-        double k1 = params[7];
-        double k2 = params[8];
-        double t_L = params[9];
-        double Si = params[10];
-        double Sn = params[11];
-        double lambda_1 = params[12];
-        double lambda_2 = params[13];
-        double v0 = params[14];
-
-        vals[13] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[14] = v_s1*(Si - Sn);//(v_s1 - v_s2)*b_L;  //second line intercept coefficient
-
-    }
-
-    else if (model_uid == 605)
-    {
-        double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-        double v_r = params[3];
-        double a_r = params[4];
-        double v_s1 = params[5];
-        double v_s2 = params[6];
-        double v_s3 = params[7];
-        double v_s4 = params[8];
-        double k1 = params[9];
-        double k2 = params[10];
-        double t_L = params[11];
-        double S1 = params[12];
-        double S2 = params[13];
-        double S3 = params[14];
-        double S4 = params[15];
-        double lambda_1 = params[16];
-        double lambda_2 = params[17];
-        double v0 = params[18];
-
-        vals[17] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[18] = v_r * (L_i / A_h) * 60; // [1/min] runoff speed.
-
-
-        vals[19] = v_s1*(S2 - S1);// first intercept
-        vals[20] = v_s2*(S3 - S2) + vals[19];// second intercept
-        vals[21] = v_s3*(S4 - S3) + vals[20] + vals[19];// third intercept
-
-    }
-
-
-    else if (model_uid == 606)
     { 
         double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-        double v_r = params[3];
-        double a_r = params[4];
-        double a = params[5];
-        double b = params[6];
-        double m = params[7];
-        double mt = params[8];
-        double k1 = params[9];
-        double k2 = params[10];
-        double t_L = params[11];
-        double NoFlow = params[12];
-        double Td = params[13];
-        double Beta = params[14];
-        double lambda_1 = params[15];
-        double lambda_2 = params[16];
-        double v0 = params[17];
-
-        vals[16] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[17] = v_r * (L_i / A_h) * 60; // [1/min] runoff speed.
+        double A_i = params[0];         //Upstream area [km2]
+        double L_i = params[1];         //Hill length [m]
+        double A_h = params[2];         //Hill area [m2]
+        double Tl = params[3];          //Top soil storage [m]
+        double Ts = params[4];          //Soil storage[m]    
+        double Beta = params[5];        //Active threshold [m]
+        double Ia = params[6];          //Imprevious area [0-1]
+        double vr = params[7];          //Runoff reference speed [ms-1]
+        double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+        double ksa = params[9];         //Hydraulic sat conductivity of active layer [ms-1]
+        double a_pl = params[10];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+        double a_ls = params[11];       //alpha of the topsoil to soil def=0 
+        double a_sL = params[12];       //alpha of the active def=17
+        double lambda_1 = params[13];   //routing parameter
+        double lambda_2 = params[14];
+        double v0 = params[15];
+        vals[14] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        vals[15] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
     }
-
+    
     else if (model_uid == 608)
     { 
         double* vals = params;
@@ -2927,29 +2621,6 @@ void Precalculations(
         //Pre computed parameters
         vals[16] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
         vals[17] = v_r * (L_i / A_h) * 60; // [1/min] runoff speed.
-    }
-
-    else if (model_uid == 607)
-    { 
-        double* vals = params;
-        double A_i = params[0];
-        double L_i = params[1];
-        double A_h = params[2];
-        double v_r = params[3];
-        double a_r = params[4];
-        double a = params[5];
-        double c = params[6];
-        double m = params[7];
-        double k1 = params[8];
-        double k2 = params[9];
-        double t_L = params[10];
-        double Beta = params[11];
-        double lambda_1 = params[12];
-        double lambda_2 = params[13];
-        double v0 = params[14];
-
-        vals[13] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[14] = v_r * (L_i / A_h) * 60; // [1/min] runoff speed.
     }
 
     else if (model_uid == 654)
