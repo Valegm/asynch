@@ -207,13 +207,34 @@ double snow_rainfall_partition(double temp_air, double temp_thres, double temp_r
 //Weighted evapotranspiration 
 void evp_weighted(double *split, double s_p, double s_t, double s_s, double Tl, double Ts){
     double C_p = s_p;
-    double C_t = (s_t/Tl < 1)? s_t/Tl: 1.0;
-    double C_s = (s_s/Ts < 1)? s_s/Ts: 1.0; 
-    double C_r = 1/(C_p + C_t + C_s);
-    split[0] = C_r * C_p;
-    split[1] = C_r * C_t;
-    split[2] = C_r * C_s;        
+    double C_t = s_t/Tl;//(s_t/Tl < 1)? s_t/Tl: 1.0;
+    //double C_s = s_s/Ts;//(s_s/Ts < 1)? s_s/Ts: 1.0; 
+    double C_r = 1/(C_p + C_t); //+ C_s);
+    split[0] = (C_p > 1e-4)? C_r * C_p: 0.0;
+    split[1] = (C_t > 1e-4)? C_r * C_t: 0.0;
+    //split[2] = (C_s > 1e-4)? C_r * C_s: 0.0;        
 }
+
+//Deep percolation equations 
+double vertical_q(double s_a, double s_b, double Ta, double Tb, double Coef, double expo, int method){
+    switch (method){
+        //Constant case 
+        case 0:
+            return Coef * s_a;
+        //Variable with the depth to the impermeable zone
+        case 1: 
+            return (Coef/Ta) * s_a;
+        //Variable with the available water 
+        case 2:
+            double avail = Tb - s_b;
+            if (avail>0){
+                return (Coef/avail) * s_a;            
+            } else{
+                return 0.0;
+            }
+    }
+}
+
 // //Evaporates by steps starting from the ponded and ending on the soil
 // void evp_steps(double *split, double epot, double s_p, double s_t, double s_s){
 //     double C_p = epot * s_p; //[m]
@@ -224,7 +245,7 @@ void evp_weighted(double *split, double s_p, double s_t, double s_s, double Tl, 
 //601
 //Firt distributed model that takes the approach developed for 608 with 
 //the difference that in it we try to include soil and land use variables
-void distributedV1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+void distributed_v1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
 {
     //Parameters definition 
     unsigned short i; 
@@ -259,14 +280,20 @@ void distributedV1(double t, const double * const y_i, unsigned int dim, const d
     double q = y_i[0];                     //Discharge [m s-1]
     double s_p = y_i[1];                   //Ponded storage [m]
     double s_t = y_i[2];                   //Ponded storage [m]
-    double s_s = y_i[1];                   //Ponded storage [m]     
+    double s_s = y_i[3];                   //Ponded storage [m]         
     //Hillslope Fluxes - Vertical p to t, t to s    
-    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term
-    double q_pt = (100-Cpt) * kp * (1-Ia)*pow_t-s_p;                    //ponded to topsoil
-    pow_t = (1.0 - s_s/Ts > 0.0)? pow(1.0 - s_s/Ts,a_ts): 0.0;   //power term
-    double q_ts = Cts * (ks/Ts) * s_t;
+    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term         
+    //Version depending only on Ia
+    double q_pt = 99 * kp * pow_t * s_p;       
+    //Version depending on the competition between kp and ks
+    //double q_pt = ((2*ks/Tl)/kp) * pow_t * s_p;
+
+    // double infil = (Ts - s_s > 0.0)? pow(ks/(Ts-s_s),0.8): 0.0; 
+    // double q_ts = Cts * infil * s_t;
+    double q_ts = Cts * pow(ks/Ts,a_ts) * s_t;
+    
     //Hillslope Fluxes - To Link (L) 
-    double q_pL = Cpt * kp * s_p;                     //ponded to Link
+    double q_pL = kp * s_p;
     double q_sL = CsLb * ks * (L_i / A_h) * s_s;       //soil to Link baseflow    
     if (s_s>Beta){
         q_sL += (s_s - Beta) * CsLa * ksa * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
@@ -282,7 +309,7 @@ void distributedV1(double t, const double * const y_i, unsigned int dim, const d
 	  }
     ans[0] = invtau * pow(q, lambda_1) * ans[0];
     //Evapotranspiration    
-    double e_split[3]={0};                 //Variable to determine the et split between storages
+    double e_split[2]={0};                 //Variable to determine the et split between storages
     evp_weighted(e_split, s_p, s_t, s_s, Tl, Ts); //Et split weigthing by the storage
     //Hillslope balance: Ponded, topsoil, soil    
     ans[1] = rainfall - q_pt - q_pL - e_pot*e_split[0];    
@@ -5475,7 +5502,7 @@ void Tiling(double t, const double * const y_i, unsigned int dim, const double *
 //  TEMPERATURE MODEL FUNCTIONS///
 
 double solar_radiation(double hsi, double sf){
-    double hs = 0.97*hs*(1 -sf);
+    double hs = 0.97*hsi*(1 -sf);
     return hs;
 }
 

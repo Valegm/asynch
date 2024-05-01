@@ -408,7 +408,7 @@ case 20:	num_global_params = 9;
         globals->areah_idx = 2;
         globals->num_disk_params = 18;
         globals->convertarea_flag = 0;
-        globals->num_forcings = 4;
+        globals->num_forcings = 5;
         globals->min_error_tolerances = 5;
         break;
     case 609:	num_global_params = 1;
@@ -1402,19 +1402,20 @@ void InitRoutines(
     else if (model_uid == 601)
     {
         link->dim = 4;
-        link->no_ini_start = link->dim; //link->dim;
+        link->no_ini_start = 4; //link->dim;
         link->diff_start = 0;
 
         link->num_dense = 1;
         link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
         link->dense_indices[0] = 0;
         
-        if (link->has_res)
-        { 
-            link->differential = &Tiles_Reservoirs;
-            link->solver = &ForcedSolutionSolver;
-        }
-        else    link->differential = &distributedV1;
+        // if (link->has_res)
+        // { 
+        //     link->differential = &Tiles_Reservoirs;
+        //     link->solver = &ForcedSolutionSolver;
+        // }
+        // else 
+        link->differential = &distributed_v1;
         link->algebraic = NULL;
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;

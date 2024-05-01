@@ -92,7 +92,7 @@ void TilingHillslope(double t, const double * const y_i, unsigned int dim, const
 
 //Nicolas Models 60X family
 //601
-void distributedV1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
+void distributed_v1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
 //608
 void TilesModel(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
 void Tiles_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans);
@@ -111,6 +111,9 @@ double snow_rainfall_partition(double temp_air, double temp_thres, double temp_r
 double snow_melt_degree_day(double swe, double temp_air, double temp_thres, double melt_factor);
 //Evapotranspiration equations
 void evp_weighted(double *split, double s_p, double s_t, double s_s, double Tl, double Ts);
+//Infiltration equations 
+double vertical_qts(double s_t, double s_s, double Ts, double ks, int method);
+
 
 //Stream Temperature Model
 //700
