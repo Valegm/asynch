@@ -390,13 +390,25 @@ case 20:	num_global_params = 9;
 
     case 601:	num_global_params = 8;
         globals->uses_dam = 0;
-        globals->num_params = 13;
+        globals->num_params = 12;
         globals->dam_params_size = 0;
         globals->area_idx = 0;
         globals->areah_idx = 2;
-        globals->num_disk_params = 13;
+        globals->num_disk_params = 12;
         globals->convertarea_flag = 0;
         globals->num_forcings = 2;
+        globals->min_error_tolerances = 5;
+        break;
+
+    case 602:	num_global_params = 11;
+        globals->uses_dam = 0;
+        globals->num_params = 12;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 12;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 3;
         globals->min_error_tolerances = 5;
         break;
 
@@ -904,7 +916,7 @@ void ConvertParams(
         params[1] *= 1000;	//L: km -> m
         params[2] *= 1e6;	//A_h: km^2 -> m^2
     }    
-    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610 || model_uid == 601)
+    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610 || model_uid == 601 || model_uid == 602)
     {
         params[1] *= 1000; //L: km -> m
         params[2] *= 1e6; // Ah: km^2 -> m^2
@@ -1420,6 +1432,28 @@ void InitRoutines(
         link->check_state = NULL;
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
     }
+    else if (model_uid == 602)
+    {
+        link->dim = 5;
+        link->no_ini_start = 5; //link->dim;
+        link->diff_start = 0;
+
+        link->num_dense = 1;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+        
+        // if (link->has_res)
+        // { 
+        //     link->differential = &Tiles_Reservoirs;
+        //     link->solver = &ForcedSolutionSolver;
+        // }
+        // else 
+        link->differential = &distributed_v2;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
+
 
     else if (model_uid == 608)
     {
@@ -2520,18 +2554,33 @@ void Precalculations(
         double A_h = params[2];         //Hill area [m2]
         double Tl = params[3];          //Top soil storage [m]
         double Ts = params[4];          //Soil storage[m]    
-        double Beta = params[5];        //Active threshold [m]
-        double Ia = params[6];          //Imprevious area [0-1]
+        double Beta = params[5];        //Active threshold [m]        
+        double vr = params[6];          //Runoff reference speed [ms-1]
+        double ks = params[7];          //Hydraulic sat conductivity [ms-1]        
+        double lambda_1 = params[8];   //routing parameter
+        double lambda_2 = params[9];
+        double v0 = params[10];
+        vals[9] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        vals[10] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
+    }
+    else if (model_uid == 602)
+    { 
+        double* vals = params;
+        double A_i = params[0];         //Upstream area [km2]
+        double L_i = params[1];         //Hill length [m]
+        double A_h = params[2];         //Hill area [m2]
+        double Tl = params[3];          //Top soil storage [m]
+        double Ts = params[4];          //Soil storage[m]    
+        double Beta = params[5];        //Active threshold [m]    
+        double Tile = params[6];        //Tile depth threshold [m]    
         double vr = params[7];          //Runoff reference speed [ms-1]
         double ks = params[8];          //Hydraulic sat conductivity [ms-1]
-        double ksa = params[9];         //Hydraulic sat conductivity of active layer [ms-1]
-        double lambda_1 = params[10];   //routing parameter
-        double lambda_2 = params[11];
-        double v0 = params[12];
-        vals[11] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
-        vals[12] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
+        double lambda_1 = params[9];   //routing parameter
+        double lambda_2 = params[10];
+        double v0 = params[11];
+        vals[10] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        vals[11] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
     }
-    
     else if (model_uid == 608)
     { 
         double* vals = params;

@@ -207,12 +207,24 @@ double snow_rainfall_partition(double temp_air, double temp_thres, double temp_r
 //Weighted evapotranspiration 
 void evp_weighted(double *split, double s_p, double s_t, double s_s, double Tl, double Ts){
     double C_p = s_p;
-    double C_t = s_t/Tl;//(s_t/Tl < 1)? s_t/Tl: 1.0;
-    //double C_s = s_s/Ts;//(s_s/Ts < 1)? s_s/Ts: 1.0; 
-    double C_r = 1/(C_p + C_t); //+ C_s);
-    split[0] = (C_p > 1e-4)? C_r * C_p: 0.0;
-    split[1] = (C_t > 1e-4)? C_r * C_t: 0.0;
-    //split[2] = (C_s > 1e-4)? C_r * C_s: 0.0;        
+    double C_t = (s_t/Tl < 1)? s_t/Tl: 1.0;
+    double C_s = (s_s/Ts < 1)? s_s/Ts: 1.0; 
+    double C_r = C_p + C_t+ C_s;
+    if (C_r > 1e-12)
+    {
+        split[0] = C_p / C_r;
+        split[1] = C_t / C_r;
+        split[2] = C_s / C_r; 
+    }
+    else
+    {
+        split[0] = 0;
+        split[1] = 0;
+        split[2] = 0;
+    }
+    // split[0] = (C_p > 1e-4)? C_r * C_p: 0.0;
+    // split[1] = (C_t > 1e-4)? C_r * C_t: 0.0;
+    // split[2] = (C_s > 1e-4)? C_r * C_s: 0.0;        
 }
 
 //Deep percolation equations 
@@ -225,10 +237,9 @@ double vertical_q(double s_a, double s_b, double Ta, double Tb, double Coef, dou
         case 1: 
             return (Coef/Ta) * s_a;
         //Variable with the available water 
-        case 2:
-            double avail = Tb - s_b;
-            if (avail>0){
-                return (Coef/avail) * s_a;            
+        case 2:            
+            if (Tb - s_b>0){
+                return (Coef/(Tb - s_b)) * s_a;            
             } else{
                 return 0.0;
             }
@@ -255,15 +266,13 @@ void distributed_v1(double t, const double * const y_i, unsigned int dim, const 
     double A_h = params[2];         //Hill area [m2]
     double Tl = params[3];          //Top soil storage [m]
     double Ts = params[4];          //Soil storage[m]    
-    double Beta = params[5];        //Active threshold [m]
-    double Ia = params[6];          //Imprevious area [0-1]
-    double vr = params[7];          //Runoff reference speed [ms-1]
-    double ks = params[8];          //Hydraulic sat conductivity [ms-1]
-    double ksa = params[9];         //Hydraulic sat conductivity of active layer [ms-1]
-    double lambda_1 = params[10];   //routing parameter
+    double Beta = params[5];        //Active threshold [m]    
+    double vr = params[6];          //Runoff reference speed [ms-1]
+    double ks = params[7];          //Hydraulic sat conductivity [ms-1]    
+    double lambda_1 = params[8];   //routing parameter
     // Processed parameters
-    double invtau = params[11];     //routing parameter
-    double kp = params[12];         //ponded residency time [min-1]
+    double invtau = params[9];     //routing parameter
+    double kp = params[10];         //ponded residency time [min-1]
     //Constant parameters (calibration)
     double Cpt = global_params[0];  //Runoff and infil division def=1 [1-99]
     double Cts = global_params[1];  //Topsoil to soil flux def=1
@@ -283,20 +292,15 @@ void distributed_v1(double t, const double * const y_i, unsigned int dim, const 
     double s_s = y_i[3];                   //Ponded storage [m]         
     //Hillslope Fluxes - Vertical p to t, t to s    
     double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term         
-    //Version depending only on Ia
     double q_pt = 99 * kp * pow_t * s_p;       
-    //Version depending on the competition between kp and ks
-    //double q_pt = ((2*ks/Tl)/kp) * pow_t * s_p;
-
-    // double infil = (Ts - s_s > 0.0)? pow(ks/(Ts-s_s),0.8): 0.0; 
-    // double q_ts = Cts * infil * s_t;
-    double q_ts = Cts * pow(ks/Ts,a_ts) * s_t;
-    
+    double infil = (Ts - s_s > 0.0)? pow(ks/(Ts-s_s),a_ts): 0.0; 
+    double q_ts = Cts * infil * s_t;    
     //Hillslope Fluxes - To Link (L) 
     double q_pL = kp * s_p;
-    double q_sL = CsLb * ks * (L_i / A_h) * s_s;       //soil to Link baseflow    
+    double ksL = ks * (L_i / A_h);                     //Lateral subsurface residency time [min-1]
+    double q_sL = CsLb * ksL * (L_i / A_h) * s_s;       //soil to Link baseflow    
     if (s_s>Beta){
-        q_sL += (s_s - Beta) * CsLa * ksa * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
+        q_sL += (s_s - Beta) * CsLa * ksL * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
     }           
     //Routing streamflow
     double q_parent;
@@ -317,6 +321,98 @@ void distributed_v1(double t, const double * const y_i, unsigned int dim, const 
     ans[3] = q_ts - q_sL - e_pot*e_split[2];   
 }
 
+//602
+//Firt distributed model that takes the approach developed for 608 with 
+//the difference that in it we try to include soil and land use variables
+//This one includes snow processes on it
+void distributed_v2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
+{
+    //Parameters definition 
+    unsigned short i; 
+    //Distributed variables
+    double A_i = params[0];         //Upstream area [km2]
+    double L_i = params[1];         //Hill length [m]
+    double A_h = params[2];         //Hill area [m2]
+    double Tl = params[3];          //Top soil storage [m]
+    double Ts = params[4];          //Soil storage[m]    
+    double Beta = params[5];        //Active threshold [m]    
+    double Tile = params[6];        //Tile depth threshold [m]    
+    double vr = params[7];          //Runoff reference speed [ms-1]
+    double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+    double lambda_1 = params[9];   //routing parameter
+    // Processed parameters
+    double invtau = params[10];     //routing parameter
+    double kp = params[11];         //ponded residency time [min-1]
+    //Constant parameters (calibration)
+    double CsLa = global_params[0];  //Soil to Link flux base def=1
+    double CsLt = global_params[1];  //Soil to Link flux active def=1
+    double a_pt = global_params[2];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[3];       //alpha of the topsoil to soil def=0 
+    double a_sLa = global_params[4];       //alpha of the active def=17
+    double a_sLt = global_params[5];       //alpha of the active def=17
+    double temp_thres = global_params[6]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[7]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[8]; //frozen threshold [C]
+    double temp_range = global_params[9]; //temperature range [C]
+    double Cr = global_params[10];   //Rainfall factor def=1
+
+    //Forcings
+    double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]    
+    double temp_air = forcing_values[2];
+    //States variables 
+    double q = y_i[0];                     //Discharge [m s-1]
+    double s_p = y_i[1];                   //Ponded storage [m]
+    double s_t = y_i[2];                   //Ponded storage [m]
+    double s_s = y_i[3];                   //Ponded storage [m]
+    double s_w = y_i[4];                   //Snow storage [m]
+    //Partitions rainfall into liquid and solid
+    double prain = snow_rainfall_partition(temp_air, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_w, temp_air, temp_thres, melt_factor);
+    double psnow = 1 - prain;         
+    //Hillslope Fluxes - Vertical p to t, t to s    
+    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term         
+    double q_pt = 99 * kp * pow_t * s_p;       
+    //double infil = (Ts - s_s > 0.0)? pow(ks/Ts,a_ts): 0.0; 
+    //double infil = (ks/Ts > 0.1*kp)?
+    double q_ts = kp * 0.02 * s_t;    
+    //Hillslope Fluxes - To Link (L) 
+    double q_pL = kp * s_p;                                             //Latera runoff
+    double ksL = ks * (L_i / A_h);                                      //Lateral subsurface residency time [min-1]
+    double q_sL = ksL * s_s;                                     //subsurface to Link baseflow    
+    if (s_s>Beta){
+        q_sL += (s_s - Beta) * CsLa * ksL * exp(a_sLa * (s_s - Beta));    // Active runoff explained by an exponential func
+    }
+    if (s_s>Tile){
+        q_sL += (s_s - Tile) * CsLt * ksL * exp(a_sLt * (s_s - Tile));    // Active runoff explained by an exponential func
+    }                   
+    //Routing streamflow
+    double q_parent;
+	int q_pidx;
+    ans[0] = -q + ((q_pL + q_sL) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+		  ans[0] += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    //Evapotranspiration    
+    // double e_split[3]={0};                 //Variable to determine the et split between storages
+    // evp_weighted(e_split, s_p, s_t, s_s, Tl, Ts); //Et split weigthing by the storage
+    double C_p = s_p;
+    double C_l = (s_t/Tl > 1)? s_t/Tl: 1.0;
+    double C_s = s_s/Ts; 
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    
+    //Hillslope balance: Ponded, topsoil, soil    
+    ans[1] = rainfall*prain - q_pt - q_pL - e_p + snowmelt;    
+    ans[2] = q_pt - q_ts - e_l;//e_split[1]*e_pot;	    
+    ans[3] = q_ts - q_sL - e_s;//e_split[2]*e_pot;   
+    ans[4] = rainfall*psnow - snowmelt;
+}
 
 //Type 608
 //VariableTreshold3: similar to 604, in this case there are 3 different slopes
