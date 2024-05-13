@@ -411,6 +411,17 @@ case 20:	num_global_params = 9;
         globals->num_forcings = 3;
         globals->min_error_tolerances = 5;
         break;
+    case 603:	num_global_params = 17;
+        globals->uses_dam = 0;
+        globals->num_params = 13;
+        globals->dam_params_size = 0;
+        globals->area_idx = 0;
+        globals->areah_idx = 2;
+        globals->num_disk_params = 13;
+        globals->convertarea_flag = 0;
+        globals->num_forcings = 8;
+        globals->min_error_tolerances = 5;
+        break;
 
     case 608:	num_global_params = 5;
         globals->uses_dam = 0;
@@ -459,7 +470,7 @@ case 20:	num_global_params = 9;
         break;
 
     case 700:                               // Stream Temperature Model
-		num_global_params = 8;
+		num_global_params = 6;
 		globals->uses_dam = 0;
 		globals->num_params = 5;
 		globals->dam_params_size = 0;
@@ -916,7 +927,7 @@ void ConvertParams(
         params[1] *= 1000;	//L: km -> m
         params[2] *= 1e6;	//A_h: km^2 -> m^2
     }    
-    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610 || model_uid == 601 || model_uid == 602)
+    else if (model_uid == 654 || model_uid == 608 || model_uid == 609 || model_uid == 610 || model_uid == 601 || model_uid == 602 || model_uid == 603)
     {
         params[1] *= 1000; //L: km -> m
         params[2] *= 1e6; // Ah: km^2 -> m^2
@@ -1454,6 +1465,27 @@ void InitRoutines(
         link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
     }
 
+    else if (model_uid == 603)
+    {
+        link->dim = 6;
+        link->no_ini_start = 6; //link->dim;
+        link->diff_start = 0;
+
+        link->num_dense = 1;
+        link->dense_indices = (unsigned int*)realloc(link->dense_indices, link->num_dense * sizeof(unsigned int));
+        link->dense_indices[0] = 0;
+        
+        // if (link->has_res)
+        // { 
+        //     link->differential = &Tiles_Reservoirs;
+        //     link->solver = &ForcedSolutionSolver;
+        // }
+        // else 
+        link->differential = &dist_v2_temperature;
+        link->algebraic = NULL;
+        link->check_state = NULL;
+        link->check_consistency = &CheckConsistency_Nonzero_AllStates_q;
+    }
 
     else if (model_uid == 608)
     {
@@ -2580,6 +2612,26 @@ void Precalculations(
         double v0 = params[11];
         vals[10] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
         vals[11] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
+    }
+    else if (model_uid == 603)
+    { 
+        double* vals = params;
+        double A_i = params[0];         //Upstream area [km2]
+        double L_i = params[1];         //Hill length [m]
+        double A_h = params[2];         //Hill area [m2]
+        double Tl = params[3];          //Top soil storage [m]
+        double Ts = params[4];          //Soil storage[m]    
+        double Beta = params[5];        //Active threshold [m]    
+        double Tile = params[6];        //Tile depth threshold [m]    
+        double vr = params[7];          //Runoff reference speed [ms-1]
+        double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+        double c_depth = params[9];                      // Dimensionless
+        double f_depth = params[10];                      // Dimensionless
+        double lambda_1 = params[11];   //routing parameter
+        double lambda_2 = params[12];
+        double v0 = params[13];
+        vals[12] = 60.0*v0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        vals[13] = vr * (L_i / A_h) * 60; // [1/min] runoff speed [kp].
     }
     else if (model_uid == 608)
     { 

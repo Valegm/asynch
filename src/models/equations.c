@@ -414,6 +414,145 @@ void distributed_v2(double t, const double * const y_i, unsigned int dim, const 
     ans[4] = rainfall*psnow - snowmelt;
 }
 
+//603
+//Firt distributed model that takes the approach developed for 608 with 
+//the difference that in it we try to include soil and land use variables
+//This one includes snow processes on it
+void dist_v2_temperature(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
+{
+    //Parameters definition 
+    unsigned short i; 
+    //Distributed variables
+    //--------------------------------------------------------------------------
+    double A_i = params[0];         //Upstream area [km2]
+    double L_i = params[1];         //Hill length [m]
+    double A_h = params[2];         //Hill area [m2]
+    double Tl = params[3];          //Top soil storage [m]
+    double Ts = params[4];          //Soil storage[m]    
+    double Beta = params[5];        //Active threshold [m]    
+    double Tile = params[6];        //Tile depth threshold [m]    
+    double vr = params[7];          //Runoff reference speed [ms-1]
+    double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+    double c_depth = params[9];                      // Dimensionless
+    double f_depth = params[10];                      // Dimensionless
+    double lambda_1 = params[11];   //routing parameter
+    // Processed parameters
+    double invtau = params[12];     //routing parameter
+    double kp = params[13];         //ponded residency time [min-1]
+    
+    //Constant parameters 
+    //--------------------------------------------------------------------------
+    //Constant parameters (calibration)
+    double CsLa = global_params[0];  //Soil to Link flux base def=1
+    double CsLt = global_params[1];  //Soil to Link flux active def=1
+    double a_pt = global_params[2];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[3];       //alpha of the topsoil to soil def=0 
+    double a_sLa = global_params[4];       //alpha of the active def=17
+    double a_sLt = global_params[5];       //alpha of the active def=17
+    double temp_thres = global_params[6]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[7]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[8]; //frozen threshold [C]
+    double temp_range = global_params[9]; //temperature range [C]
+    double Cr = global_params[10];   //Rainfall factor def=1
+    //Temperature model constant parameters
+    double sigma = global_params[11];                 // Stefan-Boltzmann constant [W/m2 K4]
+    double p = global_params[12];                     // Water density [kg/m3]
+    double c = global_params[13];                     // Specific heat of water [J/kg°C]
+    double forc_sf =  global_params[14];              // Dimensionless
+    double w2_a =  global_params[15];                 // Wind coefficient - Dimensionless
+    double w2_b =  global_params[16];                 // Wind coefficient - Dimensionless    
+
+    //Forcings
+    //--------------------------------------------------------------------------
+    double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]        
+    double forc_hsi = forcing_values[2];             // Incoming solar radiation [W/m2]
+    double forc_tair = forcing_values[3];  // Air temperature [°C]       
+    double forc_rh = forcing_values[4];              // Relative humidity - [0,1]
+    double forc_cloud = forcing_values[5] * 0.01;    // Cloud cover fraction - [0,1]
+    double forc_w2 = forcing_values[6];              // Wind velocity at 2m [m/s]
+    double forc_pa = forcing_values[7] * 0.01;       // Atmospheric pressure [mbar]
+    
+    //States variables 
+    //--------------------------------------------------------------------------
+    double q = y_i[0];                     //Discharge [m s-1]
+    double s_p = y_i[1];                   //Ponded storage [m]
+    double s_t = y_i[2];                   //Ponded storage [m]
+    double s_s = y_i[3];                   //Ponded storage [m]
+    double s_w = y_i[4];                   //Snow storage [m]
+    double t_c = y_i[5];                   //Channel temperature [°C]
+
+    //Hydrological processes
+    //--------------------------------------------------------------------------
+    
+    //Partitions rainfall into liquid and solid (Snow creationg and melting)
+    double prain = snow_rainfall_partition(forc_tair, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_w, forc_tair, temp_thres, melt_factor);
+    double psnow = 1 - prain;         
+    //Hillslope Fluxes - Vertical p to t, t to s (Infiltration and percolation)    
+    double q_pt = (1.0 - s_t/Tl > 0.0)? 99*kp* pow(1.0 - s_t/Tl,a_pt) * s_p: 0.0;  
+    double q_ts = kp * 0.02 * s_t;    
+    //Hillslope Fluxes - To Link (L) (Runoff and subsurface seepage)
+    double q_pL = kp * s_p;                                             //Latera runoff
+    double ksL = ks * (L_i / A_h);                                      //Lateral subsurface residency time [min-1]
+    double q_sL = ksL * s_s;                                     //subsurface to Link baseflow    
+    double q_sLa = 0;
+    double q_sLt = 0;
+    if (s_s>Beta){
+        q_sLa = (s_s - Beta) * CsLa * ksL * exp(a_sLa * (s_s - Beta));    // Active runoff explained by an exponential func
+    }
+    if (s_s>Tile){
+        q_sLt = (s_s - Tile) * CsLt * ksL * exp(a_sLt * (s_s - Tile));    // Active runoff explained by an exponential func
+    }
+    q_sL += q_sLa + q_sLt;                   
+    //Routing streamflow and channel temperature 
+    double q_parent;
+    double t_parent;
+    double q_tot = q + ((q_pL + q_sLa + q_sLt) * A_h / 60.0) + snowmelt;    //Total discharge used to compute the weigthed temperature update
+    double t_rain = (forc_tair - 1.5 >= 0.0)? forc_tair - 1.5: 0.0;         //Effect of the Rain temperature 
+    double M = q * t_c + ((q_pL + q_sLa + q_sLt) * A_h / 60.0) * t_rain;    //Start the weigthed sum of the temperatrue mix
+	int q_pidx;
+    ans[0] = -q + ((q_pL + q_sL) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+          t_parent = y_p[i * dim+5];
+		  ans[0] += q_parent;
+          M += t_parent * q_parent;
+          q_tot += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    M = M / q_tot;
+
+    //Evapotranspiration    
+    double C_p = s_p;
+    double C_l = (s_t/Tl > 1)? s_t/Tl: 1.0;
+    double C_s = s_s/Ts; 
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    
+    //Heat Energy Budget (Temperature model)
+    double Hs = solar_radiation(forc_hsi, forc_sf);                                         // Solar radiation
+    double Hl = longwave_radiation(forc_tair, forc_rh, forc_cloud, M);                      // Net Long-Wave Radiation
+    double He = evaporative_heat_transfer(forc_rh, w2_a, w2_b, M, forc_w2);                 // Evaporative Heat Transfer
+    double Hc = convective_heat_transfer(forc_pa, forc_tair, M, w2_a, w2_b, forc_w2);       // Convective Heat Transfer
+    double HT = (Hs + Hl - He - Hc)*3600;                                                   // Total Heat Flux [W/m2]
+    double depth = c_depth * pow(q, f_depth);                                         // Channel depth [m]
+    if (depth < 0.1){
+        depth = 0.1;
+    }
+    double E = HT/(60*c*p*depth);                                                           // Energy budget [°C]/[min]
+
+    //Hydrological and temperature balance 
+    ans[1] = rainfall*prain - q_pt - q_pL - e_p + snowmelt;    
+    ans[2] = q_pt - q_ts - e_l;
+    ans[3] = q_ts - q_sL - e_s;
+    ans[4] = rainfall*psnow - snowmelt;
+    ans[5] = E;
+}
+
 //Type 608
 //VariableTreshold3: similar to 604, in this case there are 3 different slopes
 //in function of the soil water storage.
@@ -5677,9 +5816,7 @@ void Temperature_Model(double t, const double * const y_i, unsigned int dim, con
     double forc_sf =  global_params[3];              // Dimensionless
     double w2_a =  global_params[4];                 // Wind coefficient - Dimensionless
     double w2_b =  global_params[5];                 // Wind coefficient - Dimensionless    
-    double calib_m = global_params[6];
-    double calib_a = global_params[7];
-
+    
     // Local paremeters
     double c_depth = params[3];                      // Dimensionless
     double f_depth = params[4];                      // Dimensionless
@@ -5732,5 +5869,5 @@ void Temperature_Model(double t, const double * const y_i, unsigned int dim, con
         depth = 0.1;
     }
     double E = HT/(60*c*p*depth);                           // Energy budget [°C]/[min]
-    ans[0] = E*calib_m + calib_a;
+    ans[0] = E;
 }
