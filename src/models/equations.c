@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #if !defined(_MSC_VER)
 #include <config.h>
 #else 
@@ -6063,3 +6064,5878 @@ void Temperature_Model(double t, const double * const y_i, unsigned int dim, con
     double E = HT/(60*c*p*depth);                          // Energy budget [°C]/[min]
     ans[0] = E;
 }
+=======
+#if !defined(_MSC_VER)
+#include <config.h>
+#else 
+#include <config_msvc.h>
+#endif
+
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+
+#include <minmax.h>
+#include <models/equations.h>
+
+
+//extern int flaggy;
+
+//These are the right-hand side functions for the ODEs. For each of these functions:
+//double t: The current time
+//double *y_i: The approximate value of the solution to the ODEs at the current link at time t
+//double *y_p: y_p[j] has the approximate values for the immediately upstream link j to the current link at time t
+//unsigned short num_parents: The number of upstream links (parents) to link i
+//double *global_params: The global parameters
+//RainData* rain: The rain fall values for link i
+//double *params: The parameters for link i
+//int state: The current state of the system
+//double *ans (set by method, assumed that space is allocated): The value returned by the right-hand side function
+
+/*
+//Type 2000
+//Test for equations from a parser. Same as Type 1.
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s
+void parser_test(double t,double *y_i,double *y_p,unsigned short num_parents, unsigned int max_dim,double *global_params,double *forcing_values,QVSData *qvs,double *params,int state,void* user,double *ans)
+{
+unsigned int i;
+unsigned int dim = y_i.dim;
+double *tempresult;
+double inflow = 0.0;
+
+Formula* equations = (Formula*) qvs;	//!!!! Pass in somehow !!!!
+muParserHandle_t* parser = equations->parser;
+double *variable_values = equations->variable_values;
+//int numvars = mupGetVarNum(parser);
+
+
+//Set variables
+for(i=0;i<dim;i++)	variable_values.ve[i] = y_i[i];	//States
+variable_values.ve[dim] = t;					//Time
+for(i=0;i<num_parents;i++)	inflow += y_p[i * dim];
+variable_values.ve[dim+1] = inflow;				//Inflow
+variable_values.ve[dim+2] = forcing_values[0];			//Rainfall
+
+//Evaluate equations
+tempresult = mupEvalMulti(parser,&i);
+for(i=0;i<dim;i++)	ans[i] = tempresult[i];
+}
+*/
+
+
+double sq(double x) { return x * x; }
+
+//Type 1 (UID 1)
+void model1(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];  //[1/min]
+    double h_b = global_params[6];  //[m]
+    double S_L = global_params[7];  //[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double k_tl = global_params[12];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));   //[mm/month] -> [m/min]
+
+    double L = params[1];   //[m]
+    double A_h = params[2]; //[m^2]
+    double invtau = params[3];  //[1/min]
+    double k_2 = params[4];     //[1/min]
+    double k_i = params[5];     //[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double S = y_i[1];		//[m^3]
+    double s_p = y_i[2];	//[m]
+    double s_t = y_i[3];	//[m]
+    double s_s = y_i[4];	//[m]
+//    double q_b = y_i[7];    //[m^3/s]
+
+
+    //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_tl = k_tl * s_t;
+    double q_sl = k_3 * s_s;    //[m/min]
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+
+    //Discharge
+    dam_TopLayerHillslope_variable(y_i, dim, global_params, params, qvs, state, user, ans);	//ans is used for convenience !!!!
+    // Is q available in y_i? !!!!
+    double qm = ans[0] * 60.0;
+
+    //Storage
+    ans[1] = (q_pl + q_sl) * A_h - qm;
+    for (i = 0; i<num_parents; i++)
+        ans[1] += y_p[i * dim] * 60.0;
+
+    //Hillslope
+    ans[2] = forcing_values[0] * c_1 - q_pl - q_pt - e_p; // pond[1]
+    ans[3] = q_pt - q_ts - q_tl - e_t;  // toplayer[2]
+    ans[4] = q_ts - q_sl - e_s;  // subsurface[3]
+}
+
+//############################### PROCESSES ############################### 
+//simple snowmelt process using a constant melting factor and the 
+//air temperature
+double snow_melt_degree_day(double swe, double temp_air, double temp_thres, double melt_factor){
+    double snowmelt = 0;
+    //melts with negative values
+    if (temp_thres < 0 && temp_air > temp_thres){
+        melt_factor = melt_factor * -1;
+    }
+    //snow degree index melting
+    if (temp_air > temp_thres){
+        snowmelt = (swe <= temp_air*melt_factor)? swe: temp_air*melt_factor;
+    }
+    return snowmelt;
+}
+//Snow partition using a sigmoid function
+double snow_rainfall_partition(double temp_air, double temp_thres, double temp_range){
+    double prain, psnow;
+    if (temp_range > 0){
+        if (temp_air <= temp_thres){
+            prain = 5*pow((temp_air - temp_thres)/(1.4*temp_range),3) 
+                + 6.76*pow((temp_air - temp_thres)/(1.4*temp_range),2)
+                + 3.19*(temp_air - temp_thres)/(1.4*temp_range) + 0.5;
+            if (prain < 0)
+                prain = 0;
+        }
+        else{
+            prain = 5*pow((temp_air - temp_thres)/(1.4*temp_range),3) 
+                - 6.76*pow((temp_air - temp_thres)/(1.4*temp_range),2)
+                + 3.19*(temp_air - temp_thres)/(1.4*temp_range) + 0.5;
+            if (prain > 1)
+                prain = 1;
+        }            
+    }
+    else{
+        if (temp_air <= temp_thres){
+            prain = 0;
+        }
+        else{
+            prain = 1;
+        }            
+    }
+    return prain;
+}
+
+//Weighted evapotranspiration 
+void evp_weighted(double *split, double s_p, double s_t, double s_s, double Tl, double Ts){
+    double C_p = s_p;
+    double C_t = (s_t/Tl < 1)? s_t/Tl: 1.0;
+    double C_s = (s_s/Ts < 1)? s_s/Ts: 1.0; 
+    double C_r = C_p + C_t+ C_s;
+    if (C_r > 1e-12)
+    {
+        split[0] = C_p / C_r;
+        split[1] = C_t / C_r;
+        split[2] = C_s / C_r; 
+    }
+    else
+    {
+        split[0] = 0;
+        split[1] = 0;
+        split[2] = 0;
+    }
+    // split[0] = (C_p > 1e-4)? C_r * C_p: 0.0;
+    // split[1] = (C_t > 1e-4)? C_r * C_t: 0.0;
+    // split[2] = (C_s > 1e-4)? C_r * C_s: 0.0;        
+}
+
+//Deep percolation equations 
+double vertical_q(double s_a, double s_b, double Ta, double Tb, double Coef, double expo, int method){
+    switch (method){
+        //Constant case 
+        case 0:
+            return Coef * s_a;
+        //Variable with the depth to the impermeable zone
+        case 1: 
+            return (Coef/Ta) * s_a;
+        //Variable with the available water 
+        case 2:            
+            if (Tb - s_b>0){
+                return (Coef/(Tb - s_b)) * s_a;            
+            } else{
+                return 0.0;
+            }
+    }
+}
+
+// //Evaporates by steps starting from the ponded and ending on the soil
+// void evp_steps(double *split, double epot, double s_p, double s_t, double s_s){
+//     double C_p = epot * s_p; //[m]
+// }
+
+//############################### 6XX ######################################
+
+//601
+//Firt distributed model that takes the approach developed for 608 with 
+//the difference that in it we try to include soil and land use variables
+void distributed_v1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
+{
+    //Parameters definition 
+    unsigned short i; 
+    //Distributed variables
+    double A_i = params[0];         //Upstream area [km2]
+    double L_i = params[1];         //Hill length [m]
+    double A_h = params[2];         //Hill area [m2]
+    double Tl = params[3];          //Top soil storage [m]
+    double Ts = params[4];          //Soil storage[m]    
+    double Beta = params[5];        //Active threshold [m]    
+    double vr = params[6];          //Runoff reference speed [ms-1]
+    double ks = params[7];          //Hydraulic sat conductivity [ms-1]    
+    double lambda_1 = params[8];   //routing parameter
+    // Processed parameters
+    double invtau = params[9];     //routing parameter
+    double kp = params[10];         //ponded residency time [min-1]
+    //Constant parameters (calibration)
+    double Cpt = global_params[0];  //Runoff and infil division def=1 [1-99]
+    double Cts = global_params[1];  //Topsoil to soil flux def=1
+    double CsLb = global_params[2];  //Soil to Link flux base def=1
+    double CsLa = global_params[3];  //Soil to Link flux active def=1
+    double a_pt = global_params[4];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[5];       //alpha of the topsoil to soil def=0 
+    double a_sL = global_params[6];       //alpha of the active def=17
+    double Cr = global_params[7];   //Rainfall factor def=1
+    //Forcings
+    double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]    
+    //States variables 
+    double q = y_i[0];                     //Discharge [m s-1]
+    double s_p = y_i[1];                   //Ponded storage [m]
+    double s_t = y_i[2];                   //Ponded storage [m]
+    double s_s = y_i[3];                   //Ponded storage [m]         
+    //Hillslope Fluxes - Vertical p to t, t to s    
+    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term         
+    double q_pt = 99 * kp * pow_t * s_p;       
+    double infil = (Ts - s_s > 0.0)? pow(ks/(Ts-s_s),a_ts): 0.0; 
+    double q_ts = Cts * infil * s_t;    
+    //Hillslope Fluxes - To Link (L) 
+    double q_pL = kp * s_p;
+    double ksL = ks * (L_i / A_h);                     //Lateral subsurface residency time [min-1]
+    double q_sL = CsLb * ksL * (L_i / A_h) * s_s;       //soil to Link baseflow    
+    if (s_s>Beta){
+        q_sL += (s_s - Beta) * CsLa * ksL * exp(a_sL * (s_s - Beta));    // Active runoff explained by an exponential func
+    }           
+    //Routing streamflow
+    double q_parent;
+	int q_pidx;
+    ans[0] = -q + ((q_pL + q_sL) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+		  ans[0] += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    //Evapotranspiration    
+    double e_split[2]={0};                 //Variable to determine the et split between storages
+    evp_weighted(e_split, s_p, s_t, s_s, Tl, Ts); //Et split weigthing by the storage
+    //Hillslope balance: Ponded, topsoil, soil    
+    ans[1] = rainfall - q_pt - q_pL - e_pot*e_split[0];    
+    ans[2] = q_pt - q_ts - e_pot*e_split[1];	    
+    ans[3] = q_ts - q_sL - e_pot*e_split[2];   
+}
+
+//602
+//Firt distributed model that takes the approach developed for 608 with 
+//the difference that in it we try to include soil and land use variables
+//This one includes snow processes on it
+void distributed_v2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
+{
+    //Parameters definition 
+    unsigned short i; 
+    //Distributed variables
+    double A_i = params[0];         //Upstream area [km2]
+    double L_i = params[1];         //Hill length [m]
+    double A_h = params[2];         //Hill area [m2]
+    double Tl = params[3];          //Top soil storage [m]
+    double Ts = params[4];          //Soil storage[m]    
+    double Beta = params[5];        //Active threshold [m]    
+    double Tile = params[6];        //Tile depth threshold [m]    
+    double vr = params[7];          //Runoff reference speed [ms-1]
+    double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+    double lambda_1 = params[9];   //routing parameter
+    // Processed parameters
+    double invtau = params[10];     //routing parameter
+    double kp = params[11];         //ponded residency time [min-1]
+    //Constant parameters (calibration)
+    double CsLa = global_params[0];  //Soil to Link flux base def=1
+    double CsLt = global_params[1];  //Soil to Link flux active def=1
+    double a_pt = global_params[2];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[3];       //alpha of the topsoil to soil def=0 
+    double a_sLa = global_params[4];       //alpha of the active def=17
+    double a_sLt = global_params[5];       //alpha of the active def=17
+    double temp_thres = global_params[6]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[7]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[8]; //frozen threshold [C]
+    double temp_range = global_params[9]; //temperature range [C]
+    double Cr = global_params[10];   //Rainfall factor def=1
+
+    //Forcings
+    double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]    
+    double temp_air = forcing_values[2];
+    //States variables 
+    double q = y_i[0];                     //Discharge [m s-1]
+    double s_p = y_i[1];                   //Ponded storage [m]
+    double s_t = y_i[2];                   //Ponded storage [m]
+    double s_s = y_i[3];                   //Ponded storage [m]
+    double s_w = y_i[4];                   //Snow storage [m]
+    //Partitions rainfall into liquid and solid
+    double prain = snow_rainfall_partition(temp_air, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_w, temp_air, temp_thres, melt_factor);
+    double psnow = 1 - prain;         
+    //Hillslope Fluxes - Vertical p to t, t to s    
+    double pow_t = (1.0 - s_t/Tl > 0.0)? pow(1.0 - s_t/Tl,a_pt): 0.0;   //power term         
+    double q_pt = 99 * kp * pow_t * s_p;       
+    //double infil = (Ts - s_s > 0.0)? pow(ks/Ts,a_ts): 0.0; 
+    //double infil = (ks/Ts > 0.1*kp)?
+    double q_ts = kp * 0.02 * s_t;    
+    //Hillslope Fluxes - To Link (L) 
+    double q_pL = kp * s_p;                                             //Latera runoff
+    double ksL = ks * (L_i / A_h);                                      //Lateral subsurface residency time [min-1]
+    double q_sL = ksL * s_s;                                     //subsurface to Link baseflow    
+    if (s_s>Beta){
+        q_sL += (s_s - Beta) * CsLa * ksL * exp(a_sLa * (s_s - Beta));    // Active runoff explained by an exponential func
+    }
+    if (s_s>Tile){
+        q_sL += (s_s - Tile) * CsLt * ksL * exp(a_sLt * (s_s - Tile));    // Active runoff explained by an exponential func
+    }                   
+    //Routing streamflow
+    double q_parent;
+	int q_pidx;
+    ans[0] = -q + ((q_pL + q_sL) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+		  ans[0] += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    //Evapotranspiration    
+    // double e_split[3]={0};                 //Variable to determine the et split between storages
+    // evp_weighted(e_split, s_p, s_t, s_s, Tl, Ts); //Et split weigthing by the storage
+    double C_p = s_p;
+    double C_l = (s_t/Tl > 1)? s_t/Tl: 1.0;
+    double C_s = s_s/Ts; 
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    
+    //Hillslope balance: Ponded, topsoil, soil    
+    ans[1] = rainfall*prain - q_pt - q_pL - e_p + snowmelt;    
+    ans[2] = q_pt - q_ts - e_l;//e_split[1]*e_pot;	    
+    ans[3] = q_ts - q_sL - e_s;//e_split[2]*e_pot;   
+    ans[4] = rainfall*psnow - snowmelt;
+}
+
+//603
+//Firt distributed model that takes the approach developed for 608 with 
+//the difference that in it we try to include soil and land use variables
+//This one includes snow processes on it
+void dist_v2_temperature(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)                  
+{
+    //Parameters definition 
+    unsigned short i; 
+    //Distributed variables
+    //--------------------------------------------------------------------------
+    double A_i = params[0];         //Upstream area [km2]
+    double L_i = params[1];         //Hill length [m]
+    double A_h = params[2];         //Hill area [m2]
+    double Tl = params[3];          //Top soil storage [m]
+    double Ts = params[4];          //Soil storage[m]    
+    double Beta = params[5];        //Active threshold [m]    
+    double Tile = params[6];        //Tile depth threshold [m]    
+    double vr = params[7];          //Runoff reference speed [ms-1]
+    double ks = params[8];          //Hydraulic sat conductivity [ms-1]
+    double c_depth = params[9];                      // Dimensionless
+    double f_depth = params[10];                      // Dimensionless
+    double lambda_1 = params[11];   //routing parameter
+    // Processed parameters
+    double invtau = params[12];     //routing parameter
+    double kp = params[13];         //ponded residency time [min-1]
+    
+    //Constant parameters 
+    //--------------------------------------------------------------------------
+    //Constant parameters (calibration)
+    double CsLa = global_params[0];  //Soil to Link flux base def=1
+    double CsLt = global_params[1];  //Soil to Link flux active def=1
+    double a_pt = global_params[2];       //alpha (exponent) of the ponded to topsoil def=3, [adim]
+    double a_ts = global_params[3];       //alpha of the topsoil to soil def=0 
+    double a_sLa = global_params[4];       //alpha of the active def=17
+    double a_sLt = global_params[5];       //alpha of the active def=17
+    double temp_thres = global_params[6]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[7]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[8]; //frozen threshold [C]
+    double temp_range = global_params[9]; //temperature range [C]
+    double Cr = global_params[10];   //Rainfall factor def=1
+    //Temperature model constant parameters
+    double sigma = global_params[11];                 // Stefan-Boltzmann constant [W/m2 K4]
+    double p = global_params[12];                     // Water density [kg/m3]
+    double c = global_params[13];                     // Specific heat of water [J/kg°C]
+    double forc_sf =  global_params[14];              // Dimensionless
+    double w2_a =  global_params[15];                 // Wind coefficient - Dimensionless
+    double w2_b =  global_params[16];                 // Wind coefficient - Dimensionless    
+
+    //Forcings
+    //--------------------------------------------------------------------------
+    double rainfall = forcing_values[0] * (0.001/60) * Cr; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]        
+    double forc_hsi = forcing_values[2];             // Incoming solar radiation [W/m2]
+    double forc_tair = forcing_values[3];  // Air temperature [°C]       
+    double forc_rh = forcing_values[4];              // Relative humidity - [0,1]
+    double forc_cloud = forcing_values[5] * 0.01;    // Cloud cover fraction - [0,1]
+    double forc_w2 = forcing_values[6];              // Wind velocity at 2m [m/s]
+    double forc_pa = forcing_values[7] * 0.01;       // Atmospheric pressure [mbar]
+    
+    //States variables 
+    //--------------------------------------------------------------------------
+    double q = y_i[0];                     //Discharge [m s-1]
+    double s_p = y_i[1];                   //Ponded storage [m]
+    double s_t = y_i[2];                   //Ponded storage [m]
+    double s_s = y_i[3];                   //Ponded storage [m]
+    double s_w = y_i[4];                   //Snow storage [m]
+    double t_c = y_i[5];                   //Channel temperature [°C]
+
+    //Hydrological processes
+    //--------------------------------------------------------------------------
+    
+    //Partitions rainfall into liquid and solid (Snow creationg and melting)
+    double prain = snow_rainfall_partition(forc_tair, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_w, forc_tair, temp_thres, melt_factor);
+    double psnow = 1 - prain;         
+    //Hillslope Fluxes - Vertical p to t, t to s (Infiltration and percolation)    
+    double q_pt = (1.0 - s_t/Tl > 0.0)? 99*kp* pow(1.0 - s_t/Tl,a_pt) * s_p: 0.0;  
+    double q_ts = kp * 0.02 * s_t;    
+    //Hillslope Fluxes - To Link (L) (Runoff and subsurface seepage)
+    double q_pL = kp * s_p;                                             //Latera runoff
+    double ksL = ks * (L_i / A_h);                                      //Lateral subsurface residency time [min-1]
+    double q_sL = ksL * s_s;                                     //subsurface to Link baseflow    
+    double q_sLa = 0;
+    double q_sLt = 0;
+    if (s_s>Beta){
+        q_sLa = (s_s - Beta) * CsLa * ksL * exp(a_sLa * (s_s - Beta));    // Active runoff explained by an exponential func
+    }
+    if (s_s>Tile){
+        q_sLt = (s_s - Tile) * CsLt * ksL * exp(a_sLt * (s_s - Tile));    // Active runoff explained by an exponential func
+    }
+    q_sL += q_sLa + q_sLt;                   
+    //Routing streamflow and channel temperature 
+    double q_parent;
+    double t_parent;
+    double q_tot = q + ((q_pL + q_sLa + q_sLt) * A_h / 60.0) + snowmelt;    //Total discharge used to compute the weigthed temperature update
+    double t_rain = (forc_tair - 1.5 >= 0.0)? forc_tair - 1.5: 0.0;         //Effect of the Rain temperature 
+    double M = q * t_c + ((q_pL + q_sLa + q_sLt) * A_h / 60.0) * t_rain;    //Start the weigthed sum of the temperatrue mix
+	int q_pidx;
+    ans[0] = -q + ((q_pL + q_sL) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+          t_parent = y_p[i * dim+5];
+		  ans[0] += q_parent;
+          M += t_parent * q_parent;
+          q_tot += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    M = M / q_tot;
+
+    //Evapotranspiration    
+    double C_p = s_p;
+    double C_l = (s_t/Tl > 1)? s_t/Tl: 1.0;
+    double C_s = s_s/Ts; 
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    
+    //Heat Energy Budget (Temperature model)
+    double Hs = solar_radiation(forc_hsi, forc_sf);                                         // Solar radiation
+    double Hl = longwave_radiation(forc_tair, forc_rh, forc_cloud, M);                      // Net Long-Wave Radiation
+    double He = evaporative_heat_transfer(forc_rh, w2_a, w2_b, M, forc_w2);                 // Evaporative Heat Transfer
+    double Hc = convective_heat_transfer(forc_pa, forc_tair, M, w2_a, w2_b, forc_w2);       // Convective Heat Transfer
+    double HT = (Hs + Hl - He - Hc)*3600;                                                   // Total Heat Flux [W/m2]
+    double depth = c_depth * pow(q, f_depth);                                         // Channel depth [m]
+    if (depth < 0.1){
+        depth = 0.1;
+    }
+    double E = HT/(60*c*p*depth);                                                           // Energy budget [°C]/[min]
+
+    //Hydrological and temperature balance 
+    ans[1] = rainfall*prain - q_pt - q_pL - e_p + snowmelt;    
+    ans[2] = q_pt - q_ts - e_l;
+    ans[3] = q_ts - q_sL - e_s;
+    ans[4] = rainfall*psnow - snowmelt;
+    ans[5] = E;
+}
+
+//Type 608
+//VariableTreshold3: similar to 604, in this case there are 3 different slopes
+//in function of the soil water storage.
+//model has a total of five states: 0: streamflow 1: runoff 2: top layer 3:
+//subsurface
+//The variables in the param file (.prm) are:
+// Ai, Li, Ah, So, v1, a1, v2, a2, v3, a3,   h1, h2, h3, k1, k2, k3, lam1, lam2, v0.
+void Tiles_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    if(forcing_values[4] > 0){
+        ans[0] = forcing_values[4]; // Streamflow
+    }
+    if(forcing_values[4] <=0){
+        unsigned short i;
+        for (i =0; i<num_parents; i++)
+            ans[0] += y_p[i*dim];
+    }
+    double Beta = params[14];
+    double t_L = params[11];
+    ans[1] = 0.0; 
+    ans[2] = t_L;
+    ans[3] = Beta; 
+    //ans[4] = 0.0; // Snow    
+}
+
+// Model 608
+//Current operational model
+void TilesModel(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i; 
+    //Distributed variables
+    double A_i = params[0];
+    double L_i = params[1];
+    double A_h = params[2];
+    double v_r = params[3];
+    double a_r = params[4];
+    double a = params[5];
+    double b = params[6];
+    double c = params[7];
+    double d = params[8];
+    double k3 = params[9];
+    double ki_fac = params[10];
+    double t_L = params[11];
+    double NoFlow = params[12];
+    double Td = params[13];
+    double Beta = params[14];
+    double lambda_1 = params[15];
+    // Processed parameters
+    double invtau = params[16];
+    double k2 = params[17];
+    //Global parameters 
+    double temp_thres = global_params[0]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[1]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[2]; //frozen threshold [C]
+    double temp_range = global_params[3]; //temperature range [C]
+    double rain_factor = global_params[4]; // factor to change the rainfall 
+    //double expo = params[18];
+    //Variables or sttates
+    double q = y_i[0];	
+    //double q_openloop = y_i[5];		                                        // [m^3/s]
+    double s_p = y_i[1];	                                        // [m]
+    double s_l = y_i[2];	                                        // [m]
+    double s_s = y_i[3];
+    double s_snow = y_i[4];	                                        // [m]
+
+    //Forcings
+    double rainfall = forcing_values[0] * (0.001/60) * rain_factor; //rainfall. from [mm/hr] to [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]
+    double temp_air = forcing_values[2];// - 273.15; //daily temp in [kelvin] to [C]
+    //double temp_soil = forcing_values[3]; // 1 if frozen ground, 0 if not
+
+    //Partitions rainfall into liquid and solid
+    double prain = snow_rainfall_partition(temp_air, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_snow, temp_air, temp_thres, melt_factor);
+    double psnow = 1 - prain;
+    //Update SWE storage and total rainfall 
+    ans[4] = rainfall*psnow - snowmelt;
+    double q_in = rainfall*prain + snowmelt;
+
+    //Vertical fluxes (only operates when the ground is not frozen)
+    //double q_pl = 0.0;
+    //if(temp_soil > frozen_thres){
+    double pow_t = (1.0 - s_l/t_L > 0.0)? pow(1.0 - s_l/t_L,3): 0.0;
+    double q_pl = k2*99.0*pow_t*s_p*prain;
+    //}
+    double q_ls = k2*ki_fac*s_l;
+    //double q_ls = k2*ki_fac*pow_t2*s_l; //Exp Green y Ampt approach
+    double q_pLink = k2*s_p;
+    //subsurface runoff
+    double q_sLink = 0.0;
+    double q_inT = 0.0;
+    //Base flow
+    if (s_s > NoFlow){
+        q_sLink += k3 * (s_s - NoFlow);                          // Base flow or linear portion
+    } 
+    //Active flow
+    if (s_s>Beta){
+        q_sLink += (s_s - Beta) * a * exp(b * (s_s - Beta));    // Active runoff explained by an exponential func
+    }  
+    //Tile flow
+    if (s_s > Td){
+        q_inT =  (s_s - Td) * c * exp(d *  (s_s - Td));
+        q_sLink += q_inT;         // Tile flow in function of the tile act depth and tile slopei 
+    }    
+    //Evaporation
+    double C_p = s_p;
+    double C_l = (s_l/t_L > 1)? s_l/t_L: 1.0;//s_l/t_L;
+    double C_s = (s_s - NoFlow)/(Beta - NoFlow); 
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;    
+    //Update variables
+	double q_parent;
+	int q_pidx;
+    //Discharge
+    ans[0] = -q + ((q_pLink + q_sLink) * A_h / 60.0);	
+    for (i = 0; i < num_parents; i++) {
+		  q_pidx = i * dim;
+		  q_parent = y_p[q_pidx];
+		  ans[0] += q_parent;
+	  }
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    //Ponded
+    ans[1] = q_in - q_pl - q_pLink - e_p;
+    //Top Soil Layer
+    ans[2] = q_pl - q_ls - e_l;	
+    //Subsurface (saturated) soil
+    ans[3] = q_ls - q_sLink - e_s;    
+}
+
+//Type 609
+//TilesModelBaseSep: Model 608 with baseflow separation
+// Ai, Li, Ah, So, v1, a1, v2, a2, v3, a3,   h1, h2, h3, k1, k2, k3, lam1, lam2, v0.
+void Tiles_Reservoirs_Base(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    if(forcing_values[2] > 0){
+        ans[0] = forcing_values[2]; // Streamflow
+    }
+    if(forcing_values[2] <=0){
+        unsigned short i;
+        for (i =0; i<num_parents; i++)
+            ans[0] += y_p[i*dim];
+    }
+    double Beta = params[14];
+    ans[1] = 0.0; 
+    ans[2] = 0.0;
+    ans[3] = Beta; 
+    ans[4] = 0.0; // Baseflow
+    //ans[5] = 0.0; // OpenLoop streamflow
+
+}
+
+//Type 609
+//TilesModelBase Model 608 with baseflow separation
+void TilesModel_Base(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i; 
+    //Distributed variables
+    double A_i = params[0];
+    double L_i = params[1];
+    double A_h = params[2];
+    double v_r = params[3];
+    double a_r = params[4];
+    double a = params[5];
+    double b = params[6];
+    double c = params[7];
+    double d = params[8];
+    double k3 = params[9];
+    double ki_fac = params[10];
+    double t_L = params[11]; //* forcing_values[3];
+    double NoFlow = params[12];
+    double Td = params[13];
+    double Beta = params[14];
+    double lambda_1 = params[15];
+    // Processed parameters
+    double invtau = params[16];
+    double k2 = params[17];
+    //Variables or sttates
+    double q = y_i[0];		                                        // [m^3/s]
+    double s_p = y_i[1];	                                        // [m]
+    double s_l = y_i[2];	                                        // [m]
+    double s_s = y_i[3];
+
+    //double s_c = y_i[4];
+    //double q_b = (1.0e-7>y_i[4])? 1.0e-7: y_i[4];                                // for base flow separation
+    //double q_b = y_i[4];
+
+
+    //Fluxes
+    double q_in = forcing_values[0] * (0.001/60);	//[m/min]
+    //Crop (experimental)
+    //double crop = forcing_values[3] * (1e-3 / (30.0*24.0*60.0)); //[mm/month] -> [m/min]
+    //double q_cp = (s_c + q_in - crop > 0.0)? s_c + q_in - crop: 0.0; // Crop acting as a bucket
+    //double q_cp = (crop > 0.0)? q_in*(1-s_c/crop): q_in
+
+    double pow_t = (1.0 - s_l/t_L > 0.0)? pow(1.0 - s_l/t_L,3): 0.0;
+    double q_pl = k2*99.0*pow_t*s_p;
+    double q_ls = k2*ki_fac*s_l;
+    double q_pLink = k2*s_p;
+    //subsurface runoff
+    double q_sLink = 0.0;
+    double q_inT = 0.0;
+    //Base flow
+    if (s_s > NoFlow){
+        q_sLink += k3 * (s_s - NoFlow);                          // Base flow or linear portion
+    } 
+    //Active flow
+    if (s_s>Beta){
+        q_sLink += (s_s - Beta) * a * exp(b * (s_s - Beta));    // Active runoff explained by an exponential func
+    }  
+    //Tile flow
+    if (s_s > Td){
+        q_inT =  (s_s - Td) * c * exp(d *  (s_s - Td));
+        q_sLink += q_inT;         // Tile flow in function of the tile act depth and tile slopei 
+    }    
+    //Evaporation
+    double C_p = s_p;
+    double C_l = s_l/t_L;
+    double C_s = s_s/(Beta-NoFlow);
+    //double C_c = (crop > 0.0)? s_c: 0.0;
+    double Corr_evap = 1/(C_p + C_l + C_s);
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    //double e_c = Corr_evap * C_c * e_pot;
+    //Update variables
+	double q_parent;
+	int q_pidx;
+    //Discharge
+    ans[0] = -q + ((q_pLink + q_sLink) * A_h / 60.0);
+	//ans[4] = -q_b + ((q_sLink) * A_h / 60.0);
+    for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;
+        //q_parent = y_p[q_pidx+4];
+		//ans[4] += q_parent;
+	}
+
+    ans[0] = invtau * pow(q, lambda_1) * ans[0]; //
+    //ans[4] = invtau * pow(q, lambda_1) * ans[4];
+
+    //ans[4] = (q_b/q)*ans[4];
+    //Crops
+    //ans[4] = q_in - q_cp - e_c;
+    //Ponded
+    ans[1] = q_in - q_pl - q_pLink - e_p;
+    //Top Soil Layer
+    ans[2] = q_pl - q_ls - e_l;	
+    //Subsurface (saturated) soil
+    ans[3] = q_ls - q_sLink - e_s;
+}
+
+//Type 610
+//ActiveLayerSnow: This model has the active layer definition + snow melt formulation
+// Ai, Li, Ah, So, v1, a1, v2, a2, v3, a3,   h1, h2, h3, k1, k2, k3, lam1, lam2, v0.
+void ActiveLayerSnow_Reservoir(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    if(forcing_values[2] > 0){
+        ans[0] = forcing_values[2];
+    }
+    if(forcing_values[2] <=0){
+        unsigned short i;
+        for (i =0; i<num_parents; i++)
+            ans[0] += y_p[i*dim];
+    }
+    double Beta = params[14];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = Beta;
+    ans[4] = 0.0;
+}
+
+void ActiveLayerSnow(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i; 
+    //Global parameters
+    //double t_base = global_params[0];//params[18]; // Base temp to convert snow into runoff [c]
+    //double ddf = global_params[1]; // degree day factor to convert snow into runoff [mm /c ]
+    double temp_thres = global_params[0]; //temperature threshold for snowfall [C]
+    double melt_factor = global_params[1]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+    double frozen_thres = global_params[2]; //frozen threshold [C]
+    double temp_range = global_params[3]; //temperature range [C]
+    //Distributed variables
+    double A_i = params[0];
+    double L_i = params[1];
+    double A_h = params[2];
+    double v_r = params[3];
+    double a_r = params[4];
+    double a = params[5];
+    double b = params[6];
+    double c = params[7];
+    double d = params[8];
+    double k3 = params[9];
+    double ki_fac = params[10];
+    double t_L = params[11];
+    double NoFlow = params[12];
+    double Td = params[13];
+    double Beta = params[14];
+    double lambda_1 = params[15];
+    //Processed parameters
+    double invtau = params[16];
+    double k2 = params[17];
+    //State variables
+    double q = y_i[0];      // [m^3/s]
+    double s_p = y_i[1];	// [m]
+    double s_l = y_i[2];	// [m]
+    double s_s = y_i[3];    // [m]
+    double s_snow = y_i[4]; // [m]
+    //Forcings 
+    double rainfall = forcing_values[0] * (0.001/60);	//[m/min]    
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double temp_air = forcing_values[2];       //[c]    
+    double temp_soil = forcing_values[3];     //[c]
+    //Vertical flow    
+    double pow_t = (1.0 - s_l/t_L > 0.0)? pow(1.0 - s_l/t_L,3): 0.0;
+    double q_pl = k2*99.0*pow_t*s_p;
+    double q_ls = k2*ki_fac*s_l;    
+    //Horizontal flow
+    double q_pLink = k2*s_p;    
+    double q_sLink = 0.0;
+    double q_inT = 0.0;
+    if (s_s > NoFlow){
+        q_sLink += k3 * (s_s - NoFlow);                       // Base flow or linear portion
+    } 
+    if (s_s>Beta){
+        q_sLink += (s_s - Beta) * a * exp(b * (s_s - Beta));  // Active runoff explained by an exponential func
+    }  
+    if (s_s > Td){
+        q_inT =  (s_s - Td) * c * exp(d *  (s_s - Td));
+        q_sLink += q_inT;                                     // Tile flow in function of the tile act depth and tile slopei 
+    }    
+    //Evaporation
+    double C_p = s_p;
+    double C_l = s_l/t_L;
+    double C_s = s_s/(Beta-NoFlow);
+    double Corr_evap = 1/(C_p + C_l + C_s);    
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+    //Discharge
+    double q_parent;
+	int q_pidx;
+    ans[0] = -q + ((q_pLink + q_sLink) * A_h / 60.0);
+    for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;     
+	}
+    //Calculate the percentage of snow and rainfall.
+    double prain = snow_rainfall_partition(temp_air, temp_thres, temp_range);
+    double snowmelt = snow_melt_degree_day(s_snow, temp_air, temp_thres, melt_factor);
+    double psnow = 1 - prain;
+    //Turns off the infiltration if the water is frozen
+    if (frozen_thres < temp_soil){
+        q_pl = 0.0;
+    }
+    //Updates total water entering the system as rainfall
+    double q_in = rainfall*prain + snowmelt;
+    //Updates what happens in the tanks
+    ans[0] = invtau * pow(q, lambda_1) * ans[0]; //Channel update    
+    ans[1] = q_in - q_pl - q_pLink - e_p; //Pond update
+    ans[2] = q_pl - q_ls - e_l;	 //Top Soil Layer    
+    ans[3] = q_ls - q_sLink - e_s; //Subsurface (saturated) soil
+    ans[4] = rainfall*psnow - snowmelt; //Snow storage
+}
+
+
+//Type 654
+//Variable_TopLayer: This is a version of the TopLayer model 254 with the
+//difference that in this case all variables could be distributed 
+//model has a total of four states: 0: streamflow 1: runoff 2: top layer 3:
+//subsurface
+//The variables in the param file (.prm) are:
+// Ai, Li, Ah, So, v1, a1, v2, a2, v3, a3,   h1, h2, h3, k1, k2, k3, lam1, lam2, v0.
+void Variable_TopLayer(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    //double A_i = params[0];
+    double A_i = params[0];
+    double L_i = params[1];
+    double A_h = params[2];
+    double v_h = params[3];
+    double k_i_f = params[4];
+    double k_3 = params[5];	//[1/min]
+    double h_b = params[6];	//[m]
+    double S_L = params[7];	//[m]
+    double A = params[8];
+    double B = params[9];
+    double exponent = params[10];
+    double lambda_1 = params[11];
+    double lambda_2 = params[12];
+    double v_0 = params[13];    
+    //double invtau = params[12];
+
+    //Precalculus    
+    double invtau = 60.0*v_0*pow(A_i, lambda_2)/((1.0 - lambda_1)*L_i);
+    double k_2 = v_h * L_i / A_h * 60.0;
+    double k_i = k_2 * k_i_f;
+    double c_2 = A_h / 60.0;
+    double c_1 = 0.001/60.;
+
+    //Initial conditions
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+
+    //Evaporation
+    double e_p, e_t, e_s; 
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+   // if (e_p > s_p)
+    //{
+     //   e_p = s_p * 0.99;
+    //}
+
+    //Fluxes
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+    //double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+
+    double q_pl = k_2*pow(s_p,1.67);
+                                //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+
+}
+
+//Type 612 Tetis edited by nicolas
+//Tetis model structure for runoff generation + normal routing (NO stream order based velocity)
+//Four layers
+//Global parameters:
+//The numbering is:    0   1   2   3      4      5   6   7...8
+
+//y_i: vector with model states to be resolved by the solver
+//dim:scalar with number of dimensions (states?) of the model
+//y_p
+//num_parents: number of tributary links
+//max_dim
+//global_params: global parameters applied to all hillslopes. See Precalculations in definitions.c
+//params: distributed parameters per hillslope. see Precalculations in definitions.c
+//forcing_values:
+//qvs: unused
+//state: unused
+//user: unused
+//ans: unused
+void tetis_nicoV1(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+
+	 	unsigned short i; //auxiliary variable for loops
+	    //Hillslope parameters
+        double L = params[1];   // Length of the channel [m]
+	    double A_h = params[2]; //Area of the hillslopes [m^2]
+	    double c_1 = params[4]; //factor .converts [mm/hr] to [m/min]
+        double c_3 = params[6]; // hillslope residency time [s/(min*m)]        
+	    double invtau = params[3];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+	    double c_2 = params[5];// = A_h / 60.0;	//  c_2
+        //Global  parameters 
+        double lambda_1 = global_params[1];
+        double Hu = (global_params[3]/1000);//*H_season_fact; //max available storage in static tank [mm] to [m]
+        double infiltration = global_params[4]*c_1; //infiltration rate [m/min]        
+        double percolation = global_params[5]*c_1; // percolation rate to aquifer [m/min]
+        double alfa2 = global_params[6]; //hillslope surface reference speed [m/s].
+        double alfa3 = global_params[7]; //hillslope subsurface reference speed [m/s].
+        double alfa4 = global_params[8]*24*60; //residence time [days] to [min].
+        double temp_thres = global_params[9]; //temperature threshold for snowfall [C]
+        double melt_factor = global_params[10]*(1/(24*60.0)) *(1/1000.0);//*(1e-3)*(1/1440); //melt factor [mm/(d*C)] -> [m/(min*C)]
+        double frozen_thres = global_params[11]; //frozen threshold [C]
+        double temp_range = global_params[12]; //temperature range [C]
+	    //Forcings
+        double rainfall = forcing_values[0] * c_1; //rainfall. from [mm/hr] to [m/min]
+        double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]
+		double temp_air = forcing_values[2] - 273.15; //daily temp in [kelvin] to [C]
+        double temp_soil = forcing_values[3]; // 1 if frozen ground, 0 if not
+        double crop_wat_consup = forcing_values[4] * (1e-3/(60*24)); // Water consumption of the plants [mm/day] -> [m/min]
+        //State of the storage 
+        double q = y_i[0]; //discharge [m]
+        double h1 = y_i[1]; //capilar storage [m]
+        double h2 = y_i[2]; //runoff storage [m]
+        double h3 = y_i[3]; //soil storage [m]
+        double h4 = y_i[4]; //ground storage [m]
+        double h5 = y_i[5]; //snow storage [m]
+        double h6 = y_i[6]; //plants consumption [m]
+        
+        //Lenght area relation fix 
+        if (c_3<0.025)
+            c_3 = 0.025;
+        if (c_3>1)
+            c_3 = 1;
+        
+        //Calculate the percentage of snow and rainfall.
+        double prain = snow_rainfall_partition(temp_air, temp_thres, temp_range);
+        double snowmelt = snow_melt_degree_day(h5, temp_air, temp_thres, melt_factor);
+        double psnow = 1 - prain;
+        //Update SWE storage and total rainfall 
+        ans[5] = rainfall*psnow - snowmelt;
+        double x1 = rainfall*prain + snowmelt;
+        
+        // If ground frozen all the water goes to the runoff tank
+        double x2 = 0; //Water going to the runoff
+        double d1 = 0; //Water going to the capilar storage
+        if(temp_soil < frozen_thres){
+            x2 = x1;             
+            infiltration = 0.0;            
+        }
+        //Regular TETIS model if the grouind is not frozen
+        else{            
+            x2 = max(0,x1+h1-Hu); //excedance flow to the second storage [m] [m/min] check units		
+            d1 = x1 - x2;
+        }                
+        
+        //static storage		        
+        double out1 = min(e_pot, h1);
+        //Crops water extraction from the capilar layer
+        double x22 = 0;
+        if(crop_wat_consup > 0){
+            x22 = min(h1-out1, crop_wat_consup); // takes the water for the plants
+            ans[6] = x22 - h6; // change in the crops water consumption
+        }
+        ans[1] = d1 - out1 - x22; //differential equation of static storag
+
+		//surface storage tank						
+        double x3 = min(x2, infiltration); //excedance flow to the second storage [m] [m/min] check units
+        double d2 = x2 - x3; // the input to surface storage [m] check units		
+        double out2 = h2 * alfa2 * c_3; //h2[m]*alfa2[m/s]*c_3[s/(min*m)] -> direct runoff [m/min] 
+        ans[2] = d2 - out2; //- out2_2; //differential equation of surface storage
+
+
+		// gravitational storage		
+		double x4 = min(x3,percolation); //water that percolates to aquifer storage [m/min]
+		double d3 = x3 - x4; // input to gravitational storage [m/min]		
+        double out3=h3 * alfa3*c_3; // h3[m]*alfa3[m/s]*c_3[s/(min*m)] -> interflow [m/min]
+        ans[3] = d3 - out3; //- out3_2; //differential equation for gravitational storage
+
+		//aquifer storage		
+        double out4 = h4/alfa4;        
+        ans[4] = x4 - out4; //- out4_2; //differential equation for aquifer storage
+
+		//channel storage
+	    ans[0] = -q + (out2 + out3 + out4) * c_2; //[m/min] to [m3/s]
+	    for (i = 0; i < num_parents; i++)
+	        ans[0] += y_p[i * dim];
+	    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+}
+
+
+
+//Type 225
+//This model is used for the tiling experiments. The rainfall will run through the hillslope and requires an if/then statement. The variables are river flow, ponded, top layer, subsurface layer
+//Order of parameters: A_i,L_i,A_h,slope,tileQ,invtau,aNo,actT,LinSl,aTile,LinIn,
+//The numbering is:	0   1   2    3     4     5     6   7     8   9     10
+//Order of global_params: v_r,lambda_1,lambda_2,tL,bL,kdry,ki,k2
+//The numbering is:        0      1        2     3 4   5   6   7 
+void TilingHillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[1];
+    double tL = global_params[3];
+    double bL = global_params[4];
+    double kdry = global_params[5];
+    double ki = global_params[6];
+    double k2 = global_params[7];
+    double A_h = params[2];
+    double tileQ = params[4];
+    double invtau = params[5];
+    double aNo = params[6];
+    double actTile = params[7];
+    double linSl = params[8];
+    double aTile = params[9];
+    double linInt = params[10];
+    //Variables
+    double q = y_i[0];		                                        // [m^3/s]
+    double s_p = y_i[1];	                                        // [m]
+    double s_l = y_i[2];	                                        // [m]
+    double s_s = y_i[3];
+    //Fluxes
+    double q_in = forcing_values[0] * (0.001/60);	//[m/min]
+    double q_pl = kdry*pow((1-s_l/tL),3)*s_p;                       // (m/min)
+    double q_ls = ki*s_l;			      // (m/min)
+    double q_pLink = k2*pow(s_p,1.67);                                   // (m/min)
+    double q_out = 0.0;
+    if (s_s > actTile){
+		if (tileQ > 0.5){
+            q_out = aTile * exp(21 * s_s);
+		} 
+        else{
+			q_out = aNo * s_s * exp(10 * s_s);
+		}
+	} 
+    else{
+        q_out = linSl * s_s + linInt;
+        //if (q_out < 0){
+         //   q_out = abs(linInt;
+       //}
+	}
+   // q_out = k2*0.015*pow(s_s, 2);
+    
+    //Evaporation
+    double C_p = s_p;
+    double C_l = s_l/tL;
+    double C_s = s_s/bL;
+    double Corr_evap = 1/(C_p + C_l + C_s);
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_l = Corr_evap * C_l * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+//    double e_s = 0.0
+
+	double q_parent;
+	int q_pidx;
+
+    //Discharge
+    ans[0] = -q + ((q_pLink + q_out) * A_h / 60.0);
+	for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;
+	}
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    //Ponded
+    ans[1] = q_in - q_pl - q_pLink - e_p;
+    //Top Soil Layer
+    ans[2] = q_pl - q_ls - e_l;	
+    //Subsurface (saturated) soil
+    ans[3] = q_ls - q_out - e_s;
+}
+
+//Type 250
+//Order of parameters: A_i,L_i,A_h,h_r,invtau,k_2,k_I,c_1,c_2
+//The numbering is:	0   1   2   3    4     5   6   7   8
+//E
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,gamma,h_b,e_pot
+//The numbering is:        0      1        2     3   4     5         6    7	8
+void NonLinearHillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double gamma = global_params[6];
+    double h_b = global_params[7];	//[m]
+                                        //double e_pot = global_params[8] * (1e-3/60.0);	//[mm/hr]->[m/min]
+    double e_pot = global_params[8];	//[m/min]
+
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+    double h_r = params[3];	//[m]
+    double invtau = params[4];	//[1/min]
+    double k_2 = params[5];	//[1/min]
+    double k_I = params[6];	//[1/min]
+    double c_1 = params[7];
+    double c_2 = params[8];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_s = y_i[2];	//[m]
+
+                            //Evaporation
+    double C_p, C_s, C_T;
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_s = s_s / e_pot;
+        C_T = C_p + C_s;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_s = 0.0;
+        C_T = 0.0;
+    }
+
+    double Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_s = Corr_evap * C_s * e_pot;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_ps = k_I * s_p * pow(1.0 - s_s / h_b, gamma);
+    double q_sl = k_3 * sq(s_s * L / A_h) * (h_r + h_b);
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (unsigned short i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_ps - e_p;
+    ans[2] = q_ps - q_sl - e_s;
+}
+
+
+//Type 252
+//TopLayer Hillslope
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10
+void model252(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    double S_L = global_params[7];	//[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+                                                                    //double e_pot = global_params[11];	//[m/min]
+                                                                    //double e_pot = global_params[11] * (1e-3*60.0);	//[m/min]
+                                                                    //double e_pot = 0.0;
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];	//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p  * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+}
+
+
+//Type 253 , 255,256
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10
+void TopLayerHillslope_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{	
+	if(forcing_values[2] >0){
+		ans[0] = forcing_values[2];
+	}
+    if(forcing_values[2] <=0){
+		unsigned short i;
+		for (i = 0; i<num_parents; i++)
+			ans[0] += y_p[i * dim];
+	}
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+}
+//Type 256
+void model256_reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{	
+	if(forcing_values[2] >0){
+		ans[0] = forcing_values[2];
+        //Copy Discharge open loop
+        double invtau = params[3];  //[1/min]
+        double lambda_1 = global_params[1];
+        double q_openloop = y_i[8];	
+        //ans[5] = -q_openloop + ((q_pLink + q_sLink) * A_h / 60.0);
+        unsigned short i;
+        for (i =0; i<num_parents; i++)
+            ans[8] += y_p[i*dim + 8];
+        
+        ans[8] = invtau * pow(q_openloop, lambda_1) * ans[8];
+	}
+    if(forcing_values[2] <=0){
+		unsigned short i;
+		for (i = 0; i<num_parents; i++)
+			ans[0] += y_p[i * dim];
+	}
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+}
+
+//type 249
+void model249(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    double S_L = global_params[7];	//[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q =   y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = (1.0e-7>y_i[4])? 1.0e-7: y_i[4];	//[m^3/s]
+    double q_openloop = y_i[5];
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+
+                                //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+    
+    //ans[5] = ans[0];
+    ans[5] = -q_openloop+ (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[5] += y_p[i * dim+5];
+    ans[5] = invtau * pow(q_openloop, lambda_1) * ans[5];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+    ans[4] = q_sl * A_h - q_b*60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[4] += y_p[i * dim + 4] ;
+    //ans[6] += k_3*y_p[i].ve[3]*A_h;
+    ans[4] = invtau * pow(q, lambda_1) * ans[4];
+}
+void model249_reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    double S_L = global_params[7];	//[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    //double q =   y_i[0];		//[m^3/s]
+    double q =  y_i[0];
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b =  y_i[4];	//[m^3/s]
+    //double q_openloop = (0.001>y_i[5])? 0.001 : y_i[5];
+    //double q_openloop = y_i[5];
+    double q_openloop = y_i[0];
+    //double q_b = (1.0e-7>y_i[4])? 1.0e-7: y_i[4];   
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+    //Discharge data assim
+    if(forcing_values[2] >0){
+		ans[0] = forcing_values[2];
+	}
+
+    //Discharge open loop
+    ans[5] = -q_openloop + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        //ans[5] += y_p[i * dim+5];
+        ans[5] += y_p[i * dim];
+    ans[5] = invtau * pow(q_openloop, lambda_1) * ans[5];
+    printf(" q_openloop: %f invtau: %f lambda1: %f\n", q_openloop, invtau, lambda_1);
+    printf(" ans5: %f \n", ans[5]);
+    // if(forcing_values[2] <=0){
+    //     ans[0] =ans[5];
+	// }
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+    ans[4] = q_sl * A_h - q_b*60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[4] += y_p[i * dim + 4];
+    ans[4] = invtau * pow(q_b, lambda_1) * ans[4];
+}
+//Type 251
+// 4 states.
+//soil layer thick is variable in time using a monthly forcing.
+void model251(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    //double S_L = global_params[7];	//[m]
+    double S_L = forcing_values[4]; //[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double snowmelt = forcing_values[3] * (0.001)/60; //mm/hour to m/min
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+	double rainfall = forcing_values[0] * c_1; //mm/hour to m/min
+	rainfall += snowmelt;
+
+    double q =   y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+
+                                //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = rainfall - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+
+}
+// void model249_reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+// {
+//     ans[1]=0;
+//     ans[2]=0;
+//     ans[3]=0;
+//     double invtau = params[3];	//[1/min]
+//     double lambda_1 = global_params[1];
+//     double q_openloop = y_i[5];
+//     //printf("time: %f\n", t);
+//     //printf(" forc: %f %f\n", forcing_values[0], forcing_values[1]);
+//     //printf(" flux: %f %f\n", ans[1], ans[2]);
+//     double q_b = y_i[4];	//[m^3/s]
+
+//     unsigned short i;
+//     //Discharge data assim
+//     if(forcing_values[2] >0){
+// 		ans[0] = forcing_values[2];
+// 	}
+
+//     //Discharge open loop
+//     ans[5] = -q_openloop ;
+//     for (i = 0; i<num_parents; i++){
+//         ans[5] += y_p[i * dim+5];
+//     printf(" upstream state5: %f \n", y_p[i * dim+5]);
+//     }
+        
+//     ans[5] = invtau * pow(q_openloop, lambda_1) * ans[5];
+//     //printf(" q_openloop: %f invtau: %f lambda1: %f\n", q_openloop, invtau, lambda_1);
+//     //printf(" ans5: %f \n", ans[5]);
+
+//     // if(forcing_values[2] <=0){
+//     //     ans[0] =ans[5];
+//     //     //ans[0]=1;
+// 	// }
+
+//     ans[4] = - q_b;
+//     for (i = 0; i<num_parents; i++)
+//         ans[4] += y_p[i * dim + 4];
+//     ans[4] = invtau * pow(q_b, lambda_1) * ans[4];
+
+// }
+//Type 253
+// 4 states.
+void model253(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    double S_L = global_params[7];	//[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double snowmelt = forcing_values[3] * (0.001)/60; //mm/hour to m/min
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+	double rainfall = forcing_values[0] * c_1; //mm/hour to m/min
+	rainfall += snowmelt;
+
+    double q =   y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+
+                                //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = rainfall - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+
+}
+
+//Type 254
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 3 extra states: total precip, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent,v_B
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10       11
+void model254(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	//[1/min]
+    double h_b = global_params[6];	//[m]
+    double S_L = global_params[7];	//[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+                                //double h_r = params[3];	//[m]
+    double invtau = params[3];	//[1/min]
+    double k_2 = params[4];	//[1/min]
+    double k_i = params[5];	//[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q =   y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = max(0.001,y_i[6]);	//[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;	//[m/min]
+
+                                //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+
+    //Additional states
+
+    ans[4] = forcing_values[0] * c_1;
+    ans[5] = q_pl;
+
+
+    ans[6] = q_sl * A_h - q_b*60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[6] += y_p[i * dim + 6] * 60.0;
+    //ans[6] += k_3*y_p[i].ve[3]*A_h;
+    ans[6] *= v_B / L;
+}
+
+
+//Type 255, before called TopLayerHillslope_variable
+//Contains 2 layers in the channel: discharge, storage. Contains 3 layers on hillslope: ponded, top layer, soil.
+//Order of the states is:              0          1                                        2        3       4
+//Order of parameters: A_i,L_i,A_h,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent | invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2   3   4      5       6   7  8 9   10        11    12  13  14  15
+//Order of global_params: v_0,lambda_1,lambda_2
+//The numbering is:        0      1        2
+void model255(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    double L = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+    double k_3 = params[4];	//[1/min]
+    double h_b = params[6];	//[m]
+    double S_L = params[7];	//[m]
+    double A = params[8];
+    double B = params[9];
+    double exponent = params[10];
+    double k_2 = params[12];	//[1/min]
+    double k_i = params[13];	//[1/min]
+    double c_1 = params[14];
+    double c_2 = params[15];
+    double rainfall = forcing_values[0] * c_1;
+    double snowmelt = forcing_values[3] * (0.001)/60; //mm/hour to m/min
+    rainfall+= snowmelt;
+    
+    double q = y_i[0];		//[m^3/s]
+    double S = y_i[1];		//[m^3]
+    double s_p = y_i[2];	//[m]
+    double s_t = y_i[3];	//[m]
+    double s_s = y_i[4];	//[m]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_sl = k_3 * s_s;
+
+    //Discharge
+    dam_model255(y_i, dim, global_params, params, qvs, state, user, ans);	//ans is used for convenience !!!! Is q available in y_i? !!!!
+    double qm = ans[0] * 60.0; // [m3/s] -> [m3]
+
+    //Storage
+    ans[1] = (q_pl + q_sl) * A_h - qm; //[m3]
+    for (i = 0; i<num_parents; i++)
+        ans[1] += y_p[i * dim] * 60.0; // S [m3]
+
+    //Hillslope
+    ans[2] = rainfall - q_pl - q_pt - e_p;
+    ans[3] = q_pt - q_ts - e_t;
+    ans[4] = q_ts - q_sl - e_s;
+}
+
+//Type 255 before called dam_TopLayerHillslope_variable
+//Contains 2 layers in the channel: discharge, storage. Contains 3 layers on hillslope: ponded, top layer, soil.
+//Order of the states is:              0          1                                        2        3       4
+//Order of parameters: A_i,L_i,A_h,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent | invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2   3   4      5       6   7  8 9   10        11    12  13  14  15
+//Order of global_params: v_0,lambda_1,lambda_2
+//The numbering is:        0      1        2
+void dam_model255(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double q1, q2, S1, S2, S_max, q_max, S;
+
+    //Parameters
+    double lambda_1 = global_params[1];
+    double invtau = params[11];	//[1/min]
+
+                                    //Find the discharge in [m^3/s]
+    if (state == -1)
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        //ans[0] = invtau/60.0*pow(S,1.0/(1.0-lambda_1));
+        ans[0] = pow((1.0 - lambda_1)*invtau / 60.0 * S, 1.0 / (1.0 - lambda_1));
+    }
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max;
+    }
+    else
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = ((q2 - q1) / (S2 - S1)) * (S - S1) + q1;
+    }
+}
+
+//Type 255 before called dam_TopLayerHillslope_variable
+//Contains 2 layers in the channel: discharge, storage. Contains 3 layers on hillslope: ponded, top layer, soil.
+//Order of the states is:              0          1                                        2        3       4
+//Order of parameters: A_i,L_i,A_h,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent | invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2   3   4      5       6   7  8 9   10        11    12  13  14  15
+//Order of global_params: v_0,lambda_1,lambda_2
+//The numbering is:        0      1        2
+void dam_TopLayerHillslope_variable(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double q1, q2, S1, S2, S_max, q_max, S;
+
+    //Parameters
+    double lambda_1 = global_params[1];
+    double invtau = params[11];	//[1/min]
+
+                                    //Find the discharge in [m^3/s]
+    if (state == -1)
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        //ans[0] = invtau/60.0*pow(S,1.0/(1.0-lambda_1));
+        ans[0] = pow((1.0 - lambda_1)*invtau / 60.0 * S, 1.0 / (1.0 - lambda_1));
+    }
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max;
+    }
+    else
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = (q2 - q1) / (S2 - S1) * (S - S1) + q1;
+    }
+}
+//Type 256
+//TopLayerHillslope_even_more_extras.
+//Contains 3 layers on hillslope: ponded, top layer, soil.
+// Also has 3 extra states: total precip, total ET, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent,v_B,k_tl
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10       11   12
+void model256(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];  //[1/min]
+    double h_b = global_params[6];  //[m]
+    double S_L = global_params[7];  //[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double k_tl = global_params[12];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));   //[mm/month] -> [m/min]
+
+    double L = params[1];   //[m]
+    double A_h = params[2]; //[m^2]
+                            //double h_r = params[3];	//[m]
+    double invtau = params[3];  //[1/min]
+    double k_2 = params[4];     //[1/min]
+    double k_i = params[5];     //[1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];      //[m^3/s]
+    double s_p = y_i[1];    //[m]
+    double s_t = y_i[2];    //[m]
+    double s_s = y_i[3];    //[m]
+	double q_pl0=y_i[4];	//m3s-1 
+	double q_tl0=y_i[5];	//m3s-1
+	double q_sl0=y_i[6];	//m3s-1
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[7];    //[m^3/s]
+    double q_openloop = y_i[8];    //[m^3/s]
+
+    //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_tl = k_tl * s_t;
+    double q_sl = k_3 * s_s;    //[m/min]
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;   // hillslope pond[1] depth m or m/min
+    ans[2] = q_pt - q_ts - q_tl - e_t;                      // toplayer[2] depth m or m/min
+    ans[3] = q_ts - q_sl - e_s;                             // subsurface[3] depth m or m/min
+
+    //Additional states
+    //ans[4] = forcing_values[0] * c_1;   // precip[4]
+    //ans[5] = forcing_values[1] * c_1;   // et[5]
+	//ans[6] = q_pl; //runoff
+	
+	ans[4] = q_pl *c_2 - q_pl0; //
+	ans[5] = q_tl*c_2 - q_tl0; //
+	ans[6] = q_sl*c_2 - q_sl0; //
+	//ans[4] = q_pl *c_2 ; //hillslope surface flow m3s-1
+	//ans[5] = q_tl*c_2 ; //hillslope interflow m3s-1
+	//ans[6] = q_sl*c_2 ; //hillslope subsurface flow m3s-1
+    ans[7] = q_sl * A_h - q_b*60.0;     // baseflow[7]
+    for (i = 0; i < num_parents; i++)
+        ans[7] += y_p[i * dim + 7] * 60.0;
+    ans[7] *= v_B / L;
+    //open loop
+    ans[8] = -q_openloop + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[8] += y_p[i * dim + 8];
+    ans[8] = invtau * pow(q, lambda_1) * ans[8];
+}
+
+
+
+//Type 263: similar to model 256, with distributed parameters
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 3 extra states: total precip, total ET, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent,v_B,k_tl
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10       11   12
+void model263(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    //double lambda_1 = global_params[1];
+	double A_i = params[0];
+	double L = params[1];
+	double A_h = params[2];
+    double v_0=params[3];
+    double lambda_1=params[4];
+    double lambda_2=params[5];
+    double invtau = 60.0 * v_0 * pow(A_i, lambda_2) / ((1.0 - lambda_1) * L);//[1/min]  invtau
+    double v_h=params[6];
+    double k_2=v_h * L / A_h * 60.0;	//[1/min] k_2
+    //double k_i_factor1 = params[7];
+    double k_i  = k_2*params[7];
+
+    //double k_3 = global_params[4];  //[1/min]
+    double k_3 = params[8];
+
+    //double h_b = global_params[6];  //[m]
+    double h_b = params[9];
+
+    //double S_L = global_params[7];  //[m]
+    double S_L = params[10];
+
+    double A = params[11];//global_params[8];
+    double B = params[12];//global_params[9];
+    double exponent = params[13];//global_params[10];
+    double v_B = params[14];//global_params[11];
+    double k_tl = params[15];//]global_params[12];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));   //[mm/month] -> [m/min]
+
+    //double L = params[1];   //[m]
+    //double A_h = params[2]; //[m^2]
+                            //double h_r = params[3];	//[m]
+    //double invtau = params[3];  //[1/min]
+    //double k_2 = params[4];     //[1/min]
+    //double k_i = params[5];     //[1/min]
+    //double c_1 = params[6];
+    //double c_2 = params[7];
+	double c_1 = (0.001 / 60.0);		//(mm/hr->m/min)  c_1
+	double c_2 = A_h / 60.0;	//  c_2
+
+    double q = y_i[0];      //[m^3/s]
+    double s_p = y_i[1];    //[m]
+    double s_t = y_i[2];    //[m]
+    double s_s = y_i[3];    //[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[4];    //[m^3/s]
+
+    //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_tl = k_tl * s_t;
+    double q_sl = k_3 * s_s;    //[m/min]
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;   // pond[1]
+    ans[2] = q_pt - q_ts - q_tl - e_t;                      // toplayer[2]
+    ans[3] = q_ts - q_sl - e_s;                             // subsurface[3]
+
+    //Additional states
+    //ans[4] = forcing_values[0] * c_1;   // precip[4]
+    //ans[5] = forcing_values[1] * c_1;   // et[5]
+    //ans[6] = q_pl;                      // runoff[]6
+    //ans[7] = q_sl * A_h - q_b*60.0;     // baseflow[7]
+    for (i = 0; i < num_parents; i++)
+        //ans[4] += y_p[i * dim + 4] * 60.0;
+        ans[4] += y_p[i * dim + 4] ;
+    //ans[4] *= v_B / L;
+    //pow using q not q_b to move at same flow velocity that state0
+    ans[4] = invtau * pow(q, lambda_1) * ans[4];    // baseflow[0]
+}
+
+//Type 264: similar to model 256, with a forcing for snowmelt
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 3 extra states: total precip, total ET, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent,v_B,k_tl
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10       11   12
+void model264(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+     unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];  //[1/min]
+    double h_b = global_params[6];  //[m]
+    double S_L = global_params[7];  //[m]
+    double A = global_params[8];
+    double B = global_params[9];
+    double exponent = global_params[10];
+    double v_B = global_params[11];
+    double k_tl = global_params[12];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));   //[mm/month] -> [m/min]
+	double snowmelt = forcing_values[3] * (0.001)/60; //mm/hour to m/min
+    double L = params[1];   //[m]
+    double A_h = params[2]; //[m^2]
+                            //double h_r = params[3];	//[m]
+    double invtau = params[3];  //[1/min]
+    double k_2 = params[4];     //[1/min]
+    double k_i = params[5];     //[1/min]
+    double c_1 = params[6];//converts mm/hour to m/min
+    double c_2 = params[7];//converts m/min to m3/s
+	double rainfall = forcing_values[0] * c_1; //mm/hour to m/min
+	rainfall += snowmelt;
+
+    double q = y_i[0];      //[m^3/s]
+    double s_p = y_i[1];    //[m]
+    double s_t = y_i[2];    //[m]
+    double s_s = y_i[3];    //[m]
+	double q_pl0=y_i[4];	//m3s-1 bad idea. makes everything 0
+	double q_tl0=y_i[5];	//m3s-1
+	double q_sl0=y_i[6];	//m3s-1
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[7];    //[m^3/s]
+
+
+    //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_tl = k_tl * s_t;
+    double q_sl = k_3 * s_s;    //[m/min]
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+    //Hillslope
+    ans[1] = rainfall - q_pl - q_pt - e_p;   // hillslope pond[1] depth m or m/min
+    ans[2] = q_pt - q_ts - q_tl - e_t;                      // toplayer[2] depth m or m/min
+    ans[3] = q_ts - q_sl - e_s;                             // subsurface[3] depth m or m/min
+
+    //Additional states
+    //ans[4] = forcing_values[0] * c_1;   // precip[4]
+    //ans[5] = forcing_values[1] * c_1;   // et[5]
+	//ans[6] = q_pl; //runoff
+	
+	ans[4] = q_pl *c_2 - q_pl0; //
+	ans[5] = q_tl*c_2 - q_tl0; //
+	ans[6] = q_sl*c_2 - q_sl0; //
+	//ans[4] = q_pl *c_2 ; //hillslope surface flow m3s-1
+	//ans[5] = q_tl*c_2 ; //hillslope interflow m3s-1
+	//ans[6] = q_sl*c_2 ; //hillslope subsurface flow m3s-1
+    ans[7] = q_sl * A_h - q_b*60.0;     // baseflow[7]
+    for (i = 0; i < num_parents; i++)
+        ans[7] += y_p[i * dim + 7] * 60.0;
+    ans[7] *= v_B / L;
+}
+//Type 257
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 4 extra states: total precip, total ET, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,horder,invtau,k_2,k_i,c_1,c_2
+//The numbering is:    0   1   2   3      4      5   6   7...8
+//Order of global_params: v_0_0,...,v_0_9,lambda_1_0,...,lambda_1_9,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A ,B, exponent,v_B,k_tl
+//The numbering is:       0         9     10,            19         20       21  22  23         24  25  26 27 28       29  30
+void TopLayerHillslope_spatial_velocity(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double k_3 = global_params[22];  //[1/min]
+    double h_b = global_params[24];  //[m]
+    double S_L = global_params[25];  //[m]
+    double A = global_params[26];
+    double B = global_params[27];
+    double exponent = global_params[28];
+    double v_B = global_params[29];
+    double k_tl = global_params[30];
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));   //[mm/month] -> [m/min]
+
+    double L = params[1];   //[m]
+    double A_h = params[2]; //[m^2]
+                            //double h_r = params[3];	//[m]
+    int h_order = (int)params[3];
+    assert(0 < h_order && h_order <= 10);
+    double invtau = params[4];  //[1/min]
+    double k_2 = params[5];     //[1/min]
+    double k_i = params[6];     //[1/min]
+    double c_1 = params[7];
+    double c_2 = params[8];
+
+    double lambda_1 = global_params[10 + h_order - 1];
+
+    double q = y_i[0];      //[m^3/s]
+    double s_p = y_i[1];    //[m]
+    double s_t = y_i[2];    //[m]
+    double s_s = y_i[3];    //[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[7];    //[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    double pow_term = (1.0 - s_t / S_L > 0.0) ? pow(1.0 - s_t / S_L, exponent) : 0.0;
+    double k_t = (A + B * pow_term) * k_2;
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pt = k_t * s_p;
+    double q_ts = k_i * s_t;
+    double q_tl = k_tl * s_t;
+    double q_sl = k_3 * s_s;    //[m/min]
+
+                                //Discharge
+    ans[0] = -q + (q_pl + q_tl + q_sl) * c_2;
+    for (i = 0; i < num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+                                                    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;   // pond[1]
+    ans[2] = q_pt - q_ts - q_tl - e_t;                      // toplayer[2]
+    ans[3] = q_ts - q_sl - e_s;                             // subsurface[3]
+
+                                                            //Additional states
+    ans[4] = forcing_values[0] * c_1;   // precip[4]
+    ans[5] = forcing_values[1] * c_1;   // et[5]
+    ans[6] = q_pl;                      // runoff[]6
+    ans[7] = q_sl * A_h - q_b*60.0;     // baseflow[7]
+    for (i = 0; i < num_parents; i++)
+        ans[7] += y_p[i * dim + 7] * 60.0;
+    ans[7] *= v_B / L;
+}
+
+//Type 258
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 3 extra states: total precip, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	    0   1   2     3    4   5   6  7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,v_B
+//The numbering is:        0      1        2     3   4      5       6   7   8
+void OfflineTopLayerHillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	                               // [1/min]
+    double h_b = global_params[6];	                               // [m]
+    double S_L = global_params[7];	                               // [m]
+    double v_B = global_params[8];
+    double e_pot = forcing_values[2] * (1e-3 / (30.0*24.0*60.0));  // [mm/month] -> [m/min]
+
+    double L = params[1];	                                       // [m]
+    double A_h = params[2];	                                       // [m^2]
+    double invtau = params[3];	                                   // [1/min]
+    double k_2 = params[4];	                                       // [1/min]
+    double k_i = params[5];	                                       // [1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[6];	//[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    // fluxes precip->ponds and ponds-> links
+    double q_ra_po = forcing_values[0] * c_1;             // (mm/hr -> m/min)
+    double q_po_li = k_2 * s_p;                           // (1/min * m)
+
+    // fluxes precip->top and top->subsurface
+    double q_ra_to = forcing_values[1] * c_1;             // (mm/hr -> m/min)
+    double q_to_ss = k_i * s_t;
+    
+    // flux subsurface -> link
+    double q_ss_li = k_3 * s_s;                           // (1/min * m)
+
+    //Discharge
+    ans[0] = -q + (q_po_li + q_ss_li) * c_2;              // main streamflow
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = q_ra_po - q_po_li - e_p;                     // ponds
+    ans[2] = q_ra_to - q_to_ss - e_t;                     // top layer
+    ans[3] = q_to_ss - q_ss_li - e_s;                     // sub surface
+
+    //Additional states
+    ans[4] = q_ra_po + q_ra_to;                           // acc precip
+    ans[5] = q_ra_po;                                     // acc runoff
+    ans[6] = e_pot;                                       // acc evaporation
+    ans[7] = q_ss_li * A_h - q_b*60.0;                    // base flow
+    for (i = 0; i<num_parents; i++)
+        ans[7] += y_p[i * dim + 6] * 60.0;
+    ans[7] *= v_B / L;
+}
+
+//Type 258
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10
+void OfflineTopLayerHillslope_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[3];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+}
+
+//Type 259
+//Contains 3 layers on hillslope: ponded, top layer, soil. Also has 3 extra states: total precip, total runoff, base flow
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	    0   1   2     3    4   5   6  7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,v_B,k_tl
+//The numbering is:        0      1        2     3   4      5       6   7   8   9
+void OfflineTopLayerInterflowHillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double k_3 = global_params[4];	                               // [1/min]
+    double h_b = global_params[6];	                               // [m]
+    double S_L = global_params[7];	                               // [m]
+    double v_B = global_params[8];
+    double k_tl = global_params[9];
+
+    double e_pot = forcing_values[2] * (1e-3 / (30.0*24.0*60.0));  // [mm/month] -> [m/min]
+
+    double L = params[1];	                                       // [m]
+    double A_h = params[2];	                                       // [m^2]
+    double invtau = params[3];	                                   // [1/min]
+    double k_2 = params[4];	                                       // [1/min]
+    double k_i = params[5];	                                       // [1/min]
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+                            //double s_precip = y_i[4];	//[m]
+                            //double V_r = y_i[5];	//[m^3]
+    double q_b = y_i[6];	//[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / S_L + s_s / (h_b - S_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / S_L * e_pot / Corr;
+        e_s = s_s / (h_b - S_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    // fluxes precip->ponds and ponds-> links
+    double q_ra_po = forcing_values[0] * c_1;             // (mm/hr -> m/min)
+    double q_po_li = k_2 * s_p;                           // (1/min * m)
+    double q_to_li = k_tl * s_t;                          // (1/min * m)
+
+                                                          // fluxes precip->top and top->subsurface
+    double q_ra_to = forcing_values[1] * c_1;             // (mm/hr -> m/min)
+    double q_to_ss = k_i * s_t;
+
+    // flux subsurface -> link
+    double q_ss_li = k_3 * s_s;                           // (1/min * m)
+
+                                                          //Discharge
+    ans[0] = -q + (q_po_li + q_to_li + q_ss_li) * c_2;    // main streamflow
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = q_ra_po - q_po_li - e_p;                     // ponds
+    ans[2] = q_ra_to - q_to_li - q_to_ss - e_t;           // top layer
+    ans[3] = q_to_ss - q_ss_li - e_s;                     // sub surface
+
+                                                          //Additional states
+    ans[4] = q_ra_po + q_ra_to;                           // acc precip
+    ans[5] = q_ra_po;                                     // acc runoff
+    ans[6] = e_pot;                                       // acc evaporation
+    ans[7] = q_ss_li * A_h - q_b*60.0;                    // base flow
+    for (i = 0; i<num_parents; i++)
+        ans[7] += y_p[i * dim + 6] * 60.0;
+    ans[7] *= v_B / L;
+}
+
+//Type 259
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,invtau,k_2,k_i,c_1,c_2
+//The numbering is:	0   1   2     3    4   5   6   7
+//Order of global_params: v_0,lambda_1,lambda_2,v_h,k_3,k_I_factor,h_b,S_L,A,B,exponent
+//The numbering is:        0      1        2     3   4     5        6   7  8 9  10
+void OfflineTopLayerInterflowHillslope_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[3];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+}
+
+
+//Type 400
+//Tetis model structure for runoff generation + normal routing (NO stream order based velocity)
+//Four layers
+//Global parameters:
+//The numbering is:    0   1   2   3      4      5   6   7...8
+
+//y_i: vector with model states to be resolved by the solver
+//dim:scalar with number of dimensions (states?) of the model
+//y_p
+//num_parents: number of tributary links
+//max_dim
+//global_params: global parameters applied to all hillslopes. See Precalculations in definitions.c
+//params: distributed parameters per hillslope. see Precalculations in definitions.c
+//forcing_values:
+//qvs: unused
+//state: unused
+//user: unused
+//ans: unused
+void model400(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+
+	 	unsigned short i; //auxiliary variable for loops
+	    double L = params[1];   // Length of the channel [m]
+	    double A_h = params[2]; //Area of the hillslopes [m^2]
+	    double c_1 = params[4]; //factor .converts [mm/hr] to [m/min]
+	    double rainfall = forcing_values[0] * c_1; //rainfall. from [mm/hr] to [m/min]
+	    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]
+        double temperature = forcing_values[2]; //daily temperature in Celsius
+        double temp_thres=global_params[10]; // celsius degrees
+        double melt_factor = global_params[9] *(1/(24*60.0)) *(1/1000.0); // mm/day/degree to m/min/degree
+        double frozen_ground = forcing_values[3]; // 1 if ground is frozen, 0 if not frozen 
+        double x1 =0;
+
+        //states
+        unsigned int STATE_DISCHARGE=0;
+        unsigned int STATE_STATIC= 1;
+        unsigned int STATE_SURFACE=2;
+        unsigned int STATE_SUBSURF=3;
+        unsigned int STATE_GW = 4;
+        unsigned int STATE_SNOW = 5;
+
+        //snow storage
+        double h5 = y_i[STATE_SNOW];//snow storage [m]
+        //temperature =0 is the flag for no forcing the variable. no snow process
+        if(temperature==0){
+            x1 = rainfall;
+            ans[STATE_SNOW]=0;
+        }
+        else{
+            if(temperature>=temp_thres){
+                double snowmelt = min(h5,temperature * melt_factor); // in [m]
+                ans[STATE_SNOW]=-snowmelt; //melting outs of snow storage
+                x1 = rainfall + snowmelt; // in [m]
+               // printf("temp > th: %f\n", temperature);
+               // printf("snowmelt : %f\n", snowmelt);
+            }
+            if(temperature != 0 & temperature <temp_thres){
+                ans[STATE_SNOW]=rainfall; //all precipitation is stored in the snow storage
+                x1=0;
+                //printf("temp < th: %f\n", temperature);
+            }
+        }
+        
+
+		//static storage
+		double h1 = y_i[STATE_STATIC]; //static storage [m]
+		double Hu = global_params[3]/1000; //max available storage in static tank [mm] to [m]
+		double x2 = max(0,x1 + h1 - Hu ); //excedance flow to the second storage [m] [m/min] check units
+        //if ground is frozen, x1 goes directly to the surface
+        //therefore nothing is diverted to static tank
+        if(frozen_ground == 1){
+            x2 = x1;
+        }
+            
+		//double x2 = (x1 + h1 -Hu>0.0) ? x1 + h1 -Hu : 0.0;
+		double d1 = x1 - x2; // the input to static tank [m/min]
+		double out1 = min(e_pot*pow(h1/Hu,0.6), h1); //evaporation from the static tank. it cannot evaporate more than h1 [m]
+		//double out1 = (e_pot > h1) ? e_pot : 0.0;
+		ans[STATE_STATIC] = d1 - out1; //differential equation of static storage
+
+
+		//surface storage tank
+		double h2 = y_i[STATE_SURFACE];//water in the hillslope surface [m]
+		double infiltration = global_params[4]*c_1; //infiltration rate [m/min]
+		double x3 = min(x2, infiltration); //water that infiltrates to gravitational storage [m/min]
+		double d2 = x2 - x3; // the input to surface storage [m] check units
+        double alfa2 =global_params[6]; //velocity in m/s
+        double w = alfa2 * L / A_h  * 60; // [1/min]
+        w = min(1,w); //water can take less than 1 min (dt) to leave surface
+        double out2 =0;
+        out2  = h2 * w; //direct runoff [m/min]
+		ans[STATE_SURFACE] = d2 - out2; //differential equation of surface storage
+
+
+		// SUBSURFACE storage
+		double h3 = y_i[STATE_SUBSURF]; //water in the gravitational storage in the upper part of soil [m]
+		double percolation = global_params[5]*c_1; // percolation rate to aquifer [m/min]
+		double x4 = min(x3,percolation); //water that percolates to aquifer storage [m/min]
+		double d3 = x3 - x4; // input to gravitational storage [m/min]
+		double alfa3 = global_params[7]* 24*60; //residence time [days] to [min].
+        double out3=0;
+        if(alfa3>=1)
+		    out3 = h3/alfa3; //interflow [m/min]
+		ans[STATE_SUBSURF] = d3 - out3; //differential equation for gravitational storage
+
+		//aquifer storage
+		double h4 = y_i[STATE_GW]; //water in the aquifer storage [m]
+		double deepinf = 0; //water loss to deeper aquifer [m]
+		//double x5 = min(x4,deepinf);
+		double x5 = 0;
+		double d4 = x4 - x5;
+		double alfa4 = global_params[8]* 24*60; //residence time [days] to [min].
+        double out4=0;
+        if(alfa4>=1)
+		    out4 = h4/alfa4 ; //base flow [m/min]
+		ans[STATE_GW] = d4 - out4; //differential equation for aquifer storage
+
+		//channel storage
+
+		double lambda_1 = global_params[1];
+	    double invtau = params[3];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+	    double q = y_i[STATE_DISCHARGE];      //[m^3/s]
+	   	double c_2 = params[5];// = A_h / 60.0;	//  c_2
+
+	    ans[STATE_DISCHARGE] = -q + (out2 + out3 + out4) * c_2; //[m/min] to [m3/s]
+	    for (i = 0; i < num_parents; i++)
+	        ans[STATE_DISCHARGE] += y_p[i * dim + STATE_DISCHARGE];
+	    ans[STATE_DISCHARGE] = invtau * pow(q, lambda_1) * ans[STATE_DISCHARGE];    // discharge[0]
+
+        // if (forcing_values[0]>1 && ratio<1) {
+        //     printf("time: %f\n", t);
+        //     printf(" rain in mm/hour: %f\n", forcing_values[0]);
+        //     printf(" area hill, area basin, area ratio: %f %f %f\n", A_h,A_i,ratio);
+        //     MPI_Abort(MPI_COMM_WORLD, 1);
+        // }
+
+}
+//Type 401
+//model 400 + tracking of total runoff, surface runoff, subsurface runoff and groundwater runoff
+void model401(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+
+	 	unsigned short i; //auxiliary variable for loops
+	    double L = params[1];   // Length of the channel [m]
+	    double A_h = params[2]; //Area of the hillslopes [m^2]
+        double A_i = params[0]; //Area of the basin [km^2]
+         A_i*=1e6; //[m^2]
+	    double c_1 = params[4]; //factor .converts [mm/hr] to [m/min]
+	    double rainfall = forcing_values[0] * c_1; //rainfall. from [mm/hr] to [m/min]
+	    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]
+		double temperature = forcing_values[2]; //daily temperature in Celsius
+        double temp_thres=global_params[10]; // celsius degrees
+        double melt_factor = global_params[9] *(1/(24*60.0)) *(1/1000.0); // mm/day/degree to m/min/degree
+        double frozen_ground = forcing_values[3]; // 1 if ground is frozen, 0 if not frozen 
+        double x1 =0;
+
+        // 9 states
+        // i need to put the fluxes on top because cant print more than state7. bug
+        //y0=q discharge[m3/s]
+        //y1 = basin rainfall and snowmelt [m3/hour]
+        //y2 = basin surface runoff [m3/hour]
+        //y3= basin subsurface runoff [m3/hour]
+        //y4 = basin gw rounoff [m3/hour]
+        //y5= h1 static storage[m]
+        //y6= h2 water hill surface[m]
+        //y7 = h3 water upper soil [m]
+        //y8 = h4  water lower soil [m]
+        //y9 = h5 snow storage [m]
+        unsigned int STATE_DISCHARGE=0;
+        unsigned int STATE_CUMRAINFALL=1;
+        unsigned int STATE_CUMSURF = 2;
+        unsigned int STATE_CUMSUB=3;
+        unsigned int STATE_CUMGW = 4;
+        unsigned int STATE_STATIC=5;
+        unsigned int STATE_SURFACE=6;
+        unsigned int STATE_SUBSURF =7;
+        unsigned int STATE_GW = 8;
+        unsigned int STATE_SNOW = 9;
+
+        #ifndef minf
+        #define minf(a,b) ((a) < (b) ? (a) : (b))
+        #endif
+
+        #ifndef maxf
+        #define maxf(a,b) ((a) > (b) ? (a) : (b))
+        #endif
+
+        //INITIAL VALUES
+        double h5 = y_i[STATE_SNOW];//snow storage [m]
+        double basin_rainfall = y_i[STATE_CUMRAINFALL]; //[m3/hour] see last lines
+		double h1 = y_i[STATE_STATIC]; //static storage [m]
+		double h2 = y_i[STATE_SURFACE];//water in the hillslope surface [m]
+		double h3 = y_i[STATE_SUBSURF]; //water in the gravitational storage in the upper part of soil [m]
+		double h4 = y_i[STATE_GW]; //water in the aquifer storage [m]
+	    double q = y_i[STATE_DISCHARGE];      //[m^3/s]
+
+        //verify param and init conditions 
+        // initial h1 cant be larger than Hu
+        
+        //snow storage
+        //temperature =0 is the flag for no forcing the variable. no snow process
+        if(temperature==0){
+            x1 = rainfall;
+            ans[STATE_SNOW]=0;
+        }
+        else{
+            if(temperature>=temp_thres){
+                double snowmelt = min(h5,temperature * melt_factor); // in [m/min]
+                ans[STATE_SNOW]=-snowmelt; //melting outs of snow storage
+                x1 = rainfall + snowmelt; // in [m/min]
+                //printf("temp > th: %f\n", temperature);
+                //printf("snowmelt : %f\n", snowmelt);
+            }
+            if(temperature != 0 & temperature <temp_thres){
+                ans[STATE_SNOW]=rainfall; //all precipitation is stored in the snow storage
+                x1=0;
+                //printf("temp < th: %f\n", temperature);
+            }
+        }
+
+		//static storage
+		double Hu = global_params[3]/1000; //max available storage in static tank [mm] to [m]
+        double aux1 = x1 + h1 - Hu;
+		double x2 = maxf(0,aux1); //excedance flow to the second storage [m] [m/min] check units
+        //double x2 = (aux1>0)? aux1: 0.0;
+        //if ground is frozen, x1 goes directly to the surface
+        //therefore nothing is diverted to static tank
+        if(frozen_ground == 1){
+            x2 = x1;
+        }
+		double d1 = x1 - x2; // the input to static tank [m/min]
+		double out1 = minf(e_pot, h1); //evaporation from the static tank. it cannot evaporate more than h1 [m]
+		//double out1 = (e_pot > h1) ? e_pot : 0.0;
+		ans[STATE_STATIC] = d1 - out1; //differential equation of static storage
+        //printf("t %f\n",t);
+        //printf("d1 %f\n",d1);
+        //printf("x1 and x2 %f %f\n",x1,x2);
+        //printf("out1 %f\n", out1);
+        //printf(" rain in mm/hour: %f\n", forcing_values[0]);
+        //printf("h1 %f\n ",h1);
+        //MPI_Abort(MPI_COMM_WORLD, 1);
+
+		//surface storage tank
+		double infiltration = global_params[4]*c_1; //infiltration rate [m/min]
+        if(frozen_ground == 1){
+            infiltration = 0;
+        }
+		double x3 = minf(x2, infiltration); //water that infiltrates to gravitational storage [m/min]
+		double d2 = x2 - x3; // the input to surface storage [m] check units
+		//double alfa2 = global_params[6]* 24*60; //residence time [days] to [min].
+		double alfa2 =global_params[6]; //velocity in m/s
+        double w = alfa2 * L / A_h  * 60; // [1/min]
+        w = minf(w,1); // water can take less than 1 min to
+        double out2 =0;
+        out2  = h2 * w; //direct runoff [m/min]
+		ans[STATE_SURFACE] = d2 - out2; //differential equation of surface storage
+        double surface_runoff = y_i[STATE_CUMSURF]; //[m3/hour]
+
+		// SUBSURFACE storage
+		double percolation = global_params[5]*c_1; // percolation rate to aquifer [m/min]
+		double x4 = minf(x3,percolation); //water that percolates to aquifer storage [m/min]
+		double d3 = x3 - x4; // input to gravitational storage [m/min]
+		double alfa3 = global_params[7]* 24*60; //residence time [days] to [min].
+		double out3=0;
+        if(alfa3>=1)
+		    out3 = h3/alfa3; //interflow [m/min]
+		ans[STATE_SUBSURF] = d3 - out3; //differential equation for gravitational storage
+        double subsurface_runoff = y_i[STATE_CUMSUB];  //[m3/hour]
+
+		//aquifer storage
+		double deepinf = 0; //water loss to deeper aquifer [m]
+		//double x5 = min(x4,deepinf);
+		double x5 = 0;
+		double d4 = x4 - x5;
+		double alfa4 = global_params[8]* 24*60; //residence time [days] to [min].
+		double out4=0;
+        if(alfa4>=1)
+		    out4 = h4/alfa4 ; //base flow [m/min]
+		ans[STATE_GW] = d4 - out4; //differential equation for aquifer storage
+        double groundwater_runoff = y_i[STATE_CUMGW]; //[m3/hour]
+
+		//channel storage
+		double lambda_1 = global_params[1];
+	    double invtau = params[3];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+        //double total_runoff = y_i[5];
+	   	double c_2 = params[5];// = A_h / 60.0;	//  c_2
+
+        //double ratio=A_h / A_i;
+	    ans[STATE_DISCHARGE] = -q + (out2 + out3 + out4) * c_2; //[m/min] to [m3/s]
+        //ans[STATE_DISCHARGE] = -q + (out3 + out4) * c_2; //[m/min] to [m3/s]
+
+        double aux = forcing_values[0] *(1/1000.0) * A_h;//[mm/h] to [m3/h] 
+        ans[STATE_CUMRAINFALL] = -basin_rainfall + aux; //[m3/hour] 
+        ans[STATE_CUMSURF] = -surface_runoff + out2 * 60.0 * A_h; //[m/min] to [m3/hour]
+        ans[STATE_CUMSUB] = -subsurface_runoff + out3 *60.0 * A_h ; //[m/min] to [m3/hour]
+        ans[STATE_CUMGW] = -groundwater_runoff + out4 *60.0 *A_h ; //[m/min] to [m3/hour]
+
+	    for (i = 0; i < num_parents; i++){
+            ans[STATE_DISCHARGE] += y_p[i * dim + STATE_DISCHARGE];
+            ans[STATE_CUMRAINFALL] += y_p[i * dim +STATE_CUMRAINFALL];
+            ans[STATE_CUMSURF] += y_p[i * dim +STATE_CUMSURF];
+            ans[STATE_CUMSUB] += y_p[i * dim +STATE_CUMSUB];
+            ans[STATE_CUMGW] += y_p[i * dim +STATE_CUMGW];
+        }
+	        
+	    ans[STATE_DISCHARGE] = invtau * pow(q, lambda_1) * ans[STATE_DISCHARGE];    // discharge[0]
+}
+//Type 402
+void Tetis03(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+
+	 	unsigned short i; //auxiliary variable for loops
+	    double L = params[1];   // Length of the channel [m]
+	    double A_h = params[2]; //Area of the hillslopes [m^2]
+	    double c_1 = (0.001 / 60.0); //params[10]; //factor .converts [mm/hr] to [m/min]
+	    double rainfall = forcing_values[0] * c_1; //rainfall. from [mm/hr] to [m/min]
+		//double snowmelt = forcing_values[2]; //we need to put it in [m/min]
+	    double x1 = rainfall; // x1 can be rainfall + snowmelt when last available
+	    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));//potential et[mm/month] -> [m/min]
+
+
+		//static storage
+		double h1 = y_i[1]; //static storage [m]
+		double Hu = params[3]; //max available storage in static tank [m]
+		double x2 = max(0,x1 + h1 - Hu ); //excedance flow to the second storage [m] [m/min] check units
+		//double x2 = (x1 + h1 -Hu>0.0) ? x1 + h1 -Hu : 0.0;
+		double d1 = x1 - x2; // the input to static tank [m/min]
+		double out1 = min(e_pot, h1); //evaporation from the static tank. it cannot evaporate more than h1 [m]
+		//double out1 = (e_pot > h1) ? e_pot : 0.0;
+		ans[1] = d1 - out1; //differential equation of static storage
+
+
+		//surface storage tank
+		double h2 = y_i[2];//water in the hillslope surface [m]
+		double infiltration = params[4]*c_1; //infiltration rate [m/min]
+		double x3 = min(x2, infiltration); //water that infiltrates to gravitational storage [m/min]
+		double d2 = x2 - x3; // the input to surface storage [m] check units
+		double alfa2 = params[5]; //between 0 and 1, function of slope, roughness, hill lenght.
+		double out2 = alfa2 * h2 ; //direct runoff [m/min]
+		ans[2] = d2 - out2; //differential equation of surface storage
+
+
+		// gravitational storage
+		double h3 = y_i[3]; //water in the gravitational storage in the upper part of soil
+		double percolation = params[6]*c_1; // percolation rate to aquifer [m/min]
+		double x4 = min(x3,percolation); //water that percolates to aquifer storage [m/min]
+		double d3 = x3 - x4; // input to gravitational storage [m/min]
+		double alfa3 = params[7];
+		double out3 = alfa3 * h3; //interflow [m/min]
+		ans[3] = d3 - out3; //differential equation for gravitational storage
+
+		//aquifer storage
+		double h4 = y_i[4]; //water in the aquifer storage
+		double deepinf = 0; //water loss to deeper aquifer [m]
+		//double x5 = min(x4,deepinf);
+		double x5 = 0;
+		double d4 = x4 - x5;
+		double alfa4 = params[8];
+		double out4 = alfa4 * h4 ; //base flow [m/min]
+		ans[4] = d4 - out4; //differential equation for aquifer storage
+
+		//channel storage
+
+		double lambda_1 = global_params[1];
+	    double invtau = params[9];// 60.0*v_0*pow(A_i, lambda_2) / ((1.0 - lambda_1)*L_i);	//[1/min]  invtau
+	    double q = y_i[0];      //[m^3/s]
+	    double sto = y_i[8]; //[m^3] for QVS
+
+	    double q_b = y_i[7];    //[m^3/s]
+	    double v_B = global_params[3];
+	   	double c_2 = params[10];// = A_h / 60.0;	//  c_2
+
+	    //ans[0] = -q + (out2 + out3 + out4) * c_2; //[m/min] to [m3/s]
+	    //for (i = 0; i < num_parents; i++)
+	    //    ans[0] += y_p[i * dim];
+	    //ans[0] = invtau * pow(q, lambda_1) * ans[0];    // discharge[0]
+
+	    dam_Tetis03(y_i, dim, global_params, params, qvs, state, user, ans);	//For QVS
+	    double qm = ans[0] * 60.0;
+
+	    //Storage for QVS ponds
+	    ans[8] = (out2 + out3 + out4) * A_h - qm;
+	    for (i = 0; i<num_parents; i++)
+	        ans[8] += y_p[i * dim] * 60.0;
+
+
+	   ans[7] = out4 * A_h - q_b*60.0;     // baseflow[7] //[m3/min]
+	    for (i = 0; i < num_parents; i++)
+	        ans[7] += y_p[i * dim + 7] * 60.0;
+	    ans[7] *= v_B / L; //[m3/min] to [m3/s]
+
+
+
+	    //Additional states
+	    ans[5] = forcing_values[0] * c_1;   // precip[4]
+	//    ans[5] = forcing_values[1] * c_1;   // et[5]
+	    //ans[6] = out2;                      // runoff[]
+	    ans[6] = out1;                      // et[]
+}
+
+//Type 401
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,eta,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,k_2
+//The numbering is:	0   1   2   3   4   5   6   7   8     9  |   10    11  12  13
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5
+void dam_Tetis03(const double * const y_i,
+		unsigned int num_dof,
+		const double * const global_params,
+		const double * const params,
+		const QVSData * const qvs,
+		int state,
+		void* user,
+		double *ans)
+{
+    double q1, q2, S1, S2, S_max, q_max, S;
+
+    //Parameters
+    double lambda_1 = global_params[1];
+    double invtau = params[3];
+
+    //Find the discharge in [m^3/s]
+    if (state == -1)
+    {
+        S = (y_i[8] < 0.0) ? 0.0 : y_i[8];
+        //ans[0] = invtau/60.0*pow(S,1.0/(1.0-lambda_1));
+        ans[0] = pow((1.0 - lambda_1)*invtau / 60.0 * S, 1.0 / (1.0 - lambda_1));
+    }
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max;
+    }
+    else
+    {
+        S = (y_i[8] < 0.0) ? 0.0 : y_i[8];
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = (q2 - q1) / (S2 - S1) * (S - S1) + q1;
+    }
+}
+//Type 402
+void Tetis03_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[3];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+    ans[4] = 0.0;
+    ans[5] = 0.0;
+    ans[6] = 0.0;
+    ans[7] = 0.0;
+    ans[8] = 0.0;
+}
+
+//Type 260
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h | invtau,c_1,c_2
+//The numbering is:	0   1   2  |    3    4   5 
+//Order of global_params: v_0,lambda_1,lambda_2,h_b,k_D,k_2,k_dry,k_i,T_L,N,phi
+//The numbering is:        0      1        2     3   4   5   6     7   8  9  10
+void TopLayerNonlinearExp(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double pers_to_permin = 60.0;
+
+    //Global params
+    double lambda_1 = global_params[1];
+    double h_b = global_params[3];	//[m]
+    double k_D = global_params[4];	//[1/s]
+    double k_2 = global_params[5];	//[1/s]
+    double k_dry = global_params[6];	//[1/s]
+    double k_i = global_params[7];	//[1/s]
+    double T_L = global_params[8];	//[m]
+    double N = global_params[9];	//[]
+    double phi = global_params[10];	//[]
+
+                                        //Forcings
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+                                                                    //Precalculations
+    double invtau = params[3];	//[1/min]
+    double c_1 = params[4];
+    double c_2 = params[5];
+
+    //System states
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_t = y_i[2];	//[m]
+    double s_s = y_i[3];	//[m]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / T_L + s_s / (h_b - T_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / T_L * e_pot / Corr;
+        e_s = s_s / (h_b - T_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    //Fluxes
+    double q_pl = k_2 * pers_to_permin * pow(s_p, phi);
+    double q_pt = k_dry * pers_to_permin * ((1.0 - s_t / T_L > 0.0) ? pow(1.0 - s_t / T_L, N) : 0.0) * s_p;
+    double q_ts = k_i * pers_to_permin * s_t;
+    double q_sl = k_D * pers_to_permin * s_s;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_sl) * c_2;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - q_pt - e_p;
+    ans[2] = q_pt - q_ts - e_t;
+    ans[3] = q_ts - q_sl - e_s;
+}
+
+//Type 405
+void sacsma01(double t, \
+		const double * const y_i, \
+		unsigned int dim, \
+		const double * const y_p, \
+		unsigned short num_parents, \
+		unsigned int max_dim, \
+		const double * const global_params, \
+		const double * const params, \
+		const double * const forcing_values, \
+		const QVSData * const qvs, \
+		int state, \
+		void* user, \
+		double *ans)
+{
+
+                     
+}
+
+//Type 261
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Contains 3 extra states: 
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,c_3
+//The numbering is:	0   1   2   3   4   5   6   7     8  |   9     10  11  12
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5 
+void TopLayerNonlinearExpSoilvel(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double pers_to_permin = 60.0;
+
+    //Global params
+    double lambda_1 = global_params[1];
+    double N = global_params[3];	//[]
+    double phi = global_params[4];	//[]
+    double v_B = global_params[5];	//[m/s]
+
+                                        //Local params
+    double L_i = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+    double S_h = params[3];	//[]
+    double T_L = params[4];	//[m]
+    double h_b = params[5];	//[m]
+    double k_D = params[6];	//[1/s]
+    double k_dry = params[7];	//[1/s]
+    double k_i = params[8];	//[1/s]
+
+                                //Precalculations
+    double invtau = params[9];	//[1/min]
+    double c_1 = params[10];
+    double c_2 = params[11];
+    double c_3 = params[12];
+
+    //Forcings
+    double data = forcing_values[0] * c_1;			//[mm/hr] -> [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+    double eta = forcing_values[2];					//[]
+
+                                                    //System states
+    double q = y_i[0];		//[m^3/s]
+    double S = y_i[1];		//[m^3]
+    double s_p = y_i[2];	//[m]
+    double s_t = y_i[3];	//[m]
+    double s_s = y_i[4];	//[m]
+                            //double s_precip = y_i[5];	//[m]
+                            //double V_r = y_i[6];	//[m^3]
+    double q_b = y_i[7];	//[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / T_L + s_s / (h_b - T_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / T_L * e_pot / Corr;
+        e_s = s_s / (h_b - T_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    //Fluxes
+    double k_2 = c_3 / eta;
+    double q_pl = k_2 * pers_to_permin * pow(s_p, phi);	//[m/min]
+    double q_pt = k_dry * pers_to_permin * ((1.0 - s_t / T_L > 0.0) ? pow(1.0 - s_t / T_L, N) : 0.0) * s_p;	//[m/min]
+    double q_ts = k_i * pers_to_permin * s_t;	//[m/min]
+    double q_sl = k_D * pers_to_permin * s_s;	//[m/min]
+
+                                                //Discharge
+    dam_TopLayerNonlinearExpSoilvel(y_i, dim, global_params, params, qvs, state, user, ans);	//ans is used for convenience
+    double qm = ans[0] * 60.0;
+
+    //Storage
+    ans[1] = (q_pl + q_sl) * A_h - qm;
+    for (i = 0; i<num_parents; i++)
+        ans[1] += y_p[i * dim] * 60.0;
+
+    //Hillslope
+    ans[2] = data - q_pl - q_pt - e_p;
+    ans[3] = q_pt - q_ts - e_t;
+    ans[4] = q_ts - q_sl - e_s;
+
+    //Additional states
+    ans[5] = data;
+    ans[6] = q_pl;
+    ans[7] = q_sl * A_h - q_b*60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[7] += y_p[i * dim + 7] * 60.0;
+    ans[7] *= v_B / L_i;
+}
+
+//Type 261
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,c_3
+//The numbering is:	0   1   2   3   4   5   6   7     8  |   9     10  11  12
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5 
+void dam_TopLayerNonlinearExpSoilvel(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double q1, q2, S1, S2, S_max, q_max, S;
+
+    //Parameters
+    double lambda_1 = global_params[1];
+    double invtau = params[9];
+
+    //Find the discharge in [m^3/s]
+    if (state == -1)
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        //ans[0] = invtau/60.0*pow(S,1.0/(1.0-lambda_1));
+        ans[0] = pow((1.0 - lambda_1)*invtau / 60.0 * S, 1.0 / (1.0 - lambda_1));
+    }
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max;
+    }
+    else
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = (q2 - q1) / (S2 - S1) * (S - S1) + q1;
+    }
+}
+
+//Type 261
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,c_3
+//The numbering is:	0   1   2   3   4   5   6   7     8  |   9     10  11  12
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5 
+void TopLayerNonlinearExpSoilvel_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[3];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+    ans[4] = 0.0;
+    ans[5] = 0.0;
+    ans[6] = 0.0;
+    ans[7] = 0.0;
+}
+
+//Type 262
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,eta,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,k_2
+//The numbering is:	0   1   2   3   4   5   6   7   8     9  |   10    11  12  13
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5
+void TopLayerNonlinearExpSoilvel_ConstEta(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double pers_to_permin = 60.0;
+
+    //Global params
+    double lambda_1 = global_params[1];
+    double N = global_params[3];	//[]
+    double phi = global_params[4];	//[]
+    double v_B = global_params[5];	//[m/s]
+
+                                        //Local params
+    double L_i = params[1];	//[m]
+    double A_h = params[2];	//[m^2]
+    double S_h = params[3];	//[]
+    double T_L = params[4];	//[m]
+    double eta = params[5];	//[]
+    double h_b = params[6];	//[m]
+    double k_D = params[7];	//[1/s]
+    double k_dry = params[8];	//[1/s]
+    double k_i = params[9];	//[1/s]
+
+                                //Precalculations
+    double invtau = params[10];	//[1/min]
+    double c_1 = params[11];
+    double c_2 = params[12];
+    double k_2 = params[13];
+
+    //Forcings
+    double data = forcing_values[0] * c_1;			//[mm/hr] -> [m/min]
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+                                                                    //System states
+    double q = y_i[0];		//[m^3/s]
+    double S = y_i[1];		//[m^3]
+    double s_p = y_i[2];	//[m]
+    double s_t = y_i[3];	//[m]
+    double s_s = y_i[4];	//[m]
+                            //double s_precip = y_i[5];	//[m]
+                            //double V_r = y_i[6];	//[m^3]
+    double q_b = y_i[7];	//[m^3/s]
+
+                            //Evaporation
+    double e_p, e_t, e_s;
+    double Corr = s_p + s_t / T_L + s_s / (h_b - T_L);
+    if (e_pot > 0.0 && Corr > 1e-12)
+    {
+        e_p = s_p * 1e3 * e_pot / Corr;
+        e_t = s_t / T_L * e_pot / Corr;
+        e_s = s_s / (h_b - T_L) * e_pot / Corr;
+    }
+    else
+    {
+        e_p = 0.0;
+        e_t = 0.0;
+        e_s = 0.0;
+    }
+
+    //Fluxes
+    //double k_2 = c_3 / eta;
+    double q_pl = k_2 * pers_to_permin * pow(s_p, phi);	//[m/min]
+    double q_pt = k_dry * pers_to_permin * ((1.0 - s_t / T_L > 0.0) ? pow(1.0 - s_t / T_L, N) : 0.0) * s_p;	//[m/min]
+    double q_ts = k_i * pers_to_permin * s_t;	//[m/min]
+    double q_sl = k_D * pers_to_permin * s_s;	//[m/min]
+
+                                                //Discharge
+    dam_TopLayerNonlinearExpSoilvel_ConstEta(y_i, dim, global_params, params, qvs, state, user, ans);	//ans is used for convenience
+    double qm = ans[0] * 60.0;
+
+    //Storage
+    ans[1] = (q_pl + q_sl) * A_h - qm;
+    for (i = 0; i<num_parents; i++)
+        ans[1] += y_p[i * dim] * 60.0;
+
+    //Hillslope
+    ans[2] = data - q_pl - q_pt - e_p;
+    ans[3] = q_pt - q_ts - e_t;
+    ans[4] = q_ts - q_sl - e_s;
+
+    //Additional states
+    ans[5] = data;
+    ans[6] = q_pl;
+    ans[7] = q_sl * A_h - q_b*60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[7] += y_p[i * dim + 7] * 60.0;
+    ans[7] *= v_B / L_i;
+}
+
+
+//Type 262
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,eta,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,k_2
+//The numbering is:	0   1   2   3   4   5   6   7   8     9  |   10    11  12  13
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5
+void dam_TopLayerNonlinearExpSoilvel_ConstEta(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double q1, q2, S1, S2, S_max, q_max, S;
+
+    //Parameters
+    double lambda_1 = global_params[1];
+    double invtau = params[10];
+
+    //Find the discharge in [m^3/s]
+    if (state == -1)
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        //ans[0] = invtau/60.0*pow(S,1.0/(1.0-lambda_1));
+        ans[0] = pow((1.0 - lambda_1)*invtau / 60.0 * S, 1.0 / (1.0 - lambda_1));
+    }
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max;
+    }
+    else
+    {
+        S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = (q2 - q1) / (S2 - S1) * (S - S1) + q1;
+    }
+}
+
+//Type 262
+//Contains 2 states in the channel: dischage, storage
+//Contains 3 layers on hillslope: ponded, top layer, soil
+//Order of parameters: A_i,L_i,A_h,S_h,T_L,eta,h_b,k_D,k_dry,k_i | invtau,c_1,c_2,k_2
+//The numbering is:	0   1   2   3   4   5   6   7   8     9  |   10    11  12  13
+//Order of global_params: v_0,lambda_1,lambda_2,N,phi,v_B
+//The numbering is:        0      1        2    3  4   5
+void TopLayerNonlinearExpSoilvel_ConstEta_Reservoirs(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[2];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+    ans[4] = 0.0;
+    ans[5] = 0.0;
+    ans[6] = 0.0;
+    ans[7] = 0.0;
+}
+
+//Type 19
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g,e_pot
+//The numbering is:        0      1        2     3  4   5    6
+void LinearHillslope_Evap(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double e_pot = global_params[6] * (1e-3 / 60.0);	//[mm/hr]->[m/min]
+
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_a = y_i[2];	//[m]
+
+    double q_pl = k2 * s_p;
+    double q_al = k3 * s_a;
+
+    //Evaporation
+    double C_p, C_a, C_T, Corr_evap;
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    //Corr_evap = (!state && C_T > 0.0) ? 1.0/C_T : 1.0;
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_a = Corr_evap * C_a * e_pot;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_al) * A_h / 60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - e_p;
+    ans[2] = forcing_values[0] * c_2 - q_al - e_a;
+}
+
+
+//Type 19
+//State = 0: C_T >= 1.0
+//State = 1: C_T < 1.0
+int LinearHillslope_Evap_Check(const double * const y_i, const double * const params, const double * const global_params, const QVSData * const qvs, unsigned int dam)
+{
+    double s_p = y_i[1];	//[m]
+    double s_a = y_i[2];	//[m]
+
+    double e_pot = global_params[6] * (1e-3 / 60.0);	//[mm/hr]->[m/min]
+
+    double C_p, C_a, C_T;
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+        return 0;
+
+    if (C_T >= 1.0)	return 0;
+    else 		return 1;
+}
+
+
+
+//Type 190
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5 
+void LinearHillslope_MonthlyEvap(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+        unsigned short i;
+
+    double lambda_1 = global_params[1];
+    //double e_pot = global_params[6] * (1e-3/60.0);	//[mm/hr]->[m/min]
+
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_a = y_i[2];	//[m]
+
+    double q_pl = k2 * s_p;
+    double q_al = k3 * s_a;
+
+    //Evaporation
+    double C_p, C_a, C_T, Corr_evap;
+    //double e_pot = forcing_values[1] * (1e-3/60.0);
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+	
+	double infiltration_eff = forcing_values[2] + 1;
+
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    //Corr_evap = (!state && C_T > 0.0) ? 1.0/C_T : 1.0;
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_a = Corr_evap * C_a * e_pot;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_al) * A_h / 60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - e_p;
+    ans[2] = forcing_values[0] * c_2 - q_al - e_a;
+
+    /*
+    if ((s_p > 0.000010) && (s_p < 0.000012) && (t < 200)) {
+        printf("time: %f\n", t);
+        printf(" forc: %f %f\n", forcing_values[0], forcing_values[1]);
+        printf(" flux: %f %f\n", ans[1], ans[2]);
+        printf(" state: %f %f %f\n", q, s_p, s_a);
+    }
+    */
+}
+
+
+//Type 191
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g,v_B
+//The numbering is:        0      1        2     3  4   5   6
+void LinearHillslope_MonthlyEvap_extras(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[1];
+    double v_B = global_params[6];
+
+    double L = params[1];
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+    double c_1 = params[6];
+    double c_2 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_a = y_i[2];	//[m]
+    double q_b = y_i[5];	//[m^3/s]
+
+    double q_pl = k2 * s_p;
+    double q_al = k3 * s_a;
+
+    //Evaporation
+    double C_p, C_a, C_T, Corr_evap;
+    //double e_pot = forcing_values[1] * (1e-3/60.0);
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    //Corr_evap = (!state && C_T > 0.0) ? 1.0/C_T : 1.0;
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_a = Corr_evap * C_a * e_pot;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_al) * A_h / 60.0;
+    for (unsigned short i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1 - q_pl - e_p;
+    ans[2] = forcing_values[0] * c_2 - q_al - e_a;
+
+    //Additional states
+    ans[3] = forcing_values[0] * c_1;
+    ans[4] = q_pl;
+    ans[5] = q_al * A_h - q_b * 60.0;
+    for (unsigned short i = 0; i<num_parents; i++)
+        ans[5] += y_p[i * dim + 5] * 60.0;
+    //ans[5] += k3*y_p[i].ve[2]*A_h;
+    ans[5] *= v_B / L;
+}
+
+
+//Type 191 and 192
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g,v_B
+//The numbering is:        0      1        2     3  4   5   6
+void LinearHillslope_Reservoirs_extras(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    ans[0] = forcing_values[2];
+    ans[1] = 0.0;
+    ans[2] = 0.0;
+    ans[3] = 0.0;
+    ans[4] = 0.0;
+    ans[5] = 0.0;
+    ans[6] = 0.0;
+}
+
+//Type 192
+//Order of parameters: A_i,L_i,A_h,k_2,k_i,invtau,c_1
+//The numbering is:     0   1   2   3   4    5     6
+//Order of global_params: v_r,lambda_1,lambda_2,k_I_factor,v_h,k_3,v_B
+//The numbering is:        0      1        2        3       4   5   6
+void LinearHillslope_MonthlyEvap_kI_extras(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[1];
+    double v_B = global_params[6];
+
+    double L = params[1];
+    double A_h = params[2];
+    double k_2 = params[3];
+    double k_i = params[4];
+    double k_3 = global_params[5];
+    double invtau = params[5];
+
+    double c_1 = params[6];
+
+    double q = y_i[0];	    // [m^3/s]
+    double s_p = y_i[1];    // [m]
+    double s_a = y_i[2];    // [m]
+    double q_b = y_i[5];    // [m^3/s]
+
+    //Fluxes
+    double q_pl = k_2 * s_p;
+    double q_pa = k_i * s_p;
+    double q_al = k_3 * s_a;
+
+    //Evaporation
+    double C_p, C_a, C_T, Corr_evap;
+    //double e_pot = forcing_values[1] * (1e-3/60.0);
+    double e_pot = forcing_values[1] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    //Corr_evap = (!state && C_T > 0.0) ? 1.0/C_T : 1.0;
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_a = Corr_evap * C_a * e_pot;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_al) * A_h / 60.0;
+    for (unsigned short i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = (forcing_values[0] * c_1) - q_pa - q_pl - e_p;
+    ans[2] = q_pa - q_al - e_a;
+
+    //Additional states
+    ans[3] = forcing_values[0] * c_1;
+    ans[4] = q_pl;
+    ans[5] = q_al * A_h - q_b * 60.0;
+    for (unsigned short i = 0; i<num_parents; i++)
+        ans[5] += y_p[i * dim + 5] * 60.0;
+    //ans[5] += k3*y_p[i].ve[2]*A_h;
+    ans[5] *= v_B / L;
+}
+
+//Type 193
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5
+void routing_runoff2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+
+	double A_i = params[0];
+	double L_i = params[1];
+	double A_h = params[2];
+	double invtau = params[3];
+	//printf("invtau: %f\n", invtau);
+    double q = y_i[0];		                                        // [m^3/s]
+
+    double runoff = forcing_values[0]*(0.001 / 60.0);               //(mm/hr ->m/min)
+
+
+    //in this model, all the water is routed downstream
+    ans[0] = -q + (runoff * A_h / 60.0); //m3/min to m3/s
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    
+	
+    //Hillslope
+    //ans[1] = q_rp - q_pl;
+
+    //Sub-surface
+   // ans[2] = q_ra - q_al - e_a;
+
+    //Accumulated precip
+    //ans[3] = q_rp + q_ra;
+
+
+}
+
+//Type 194
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5
+void routing_runoff1(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+
+	double A_i = params[0];
+	double L_i = params[1];
+	double A_h = params[2];
+	double invtau = params[3];
+	//printf("invtau: %f\n", invtau);
+    double q = y_i[0];		                                        // [m^3/s]
+
+    double runoff = forcing_values[0]*(0.001 / 60.0);               //(mm/hr ->m/min)
+
+
+
+    ans[0] = -q + (runoff * A_h / 60.0); //m3/min to m3/s
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+	
+    //Hillslope
+    //ans[1] = q_rp - q_pl;
+
+    //Sub-surface
+   // ans[2] = q_ra - q_al - e_a;
+
+    //Accumulated precip
+    //ans[3] = q_rp + q_ra;
+
+
+}
+
+//Type 195
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5 
+void LinearHillslope_MonthlyEvap_OnlyRouts(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+
+    double q = y_i[0];		                                        // [m^3/s]
+	double s_p = y_i[1];	                                        // [m]
+    double s_a = y_i[2];	                                        // [m]
+	double acc = y_i[3];	                                        // [m]
+
+	double q_rp = forcing_values[0] * (0.001 / 60.0);		        // (mm/hr -> m/min)
+	double q_pl = k2 * s_p;                                         // (1/min * m)
+	
+	double q_ra = forcing_values[1] * (0.001 / 60.0);               // (mm/hr -> m/min)
+    double q_al = k3 * s_a;                                         // (1/min * m)
+
+    //Evaporation
+    double C_a, C_T, Corr_evap;
+    double e_pot = forcing_values[2] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+    if (e_pot > 0.0){
+        C_a = s_a / e_pot;
+        C_T = C_a;
+    } else {
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_a = Corr_evap * C_a * e_pot;
+	double q_parent;
+	int q_pidx;
+
+    //Discharge
+    ans[0] = -q + ((q_al + q_pl) * A_h / 60.0);
+	for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;
+	}
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+	ans[1] = q_rp - q_pl;
+	
+	//Sub-surface
+    ans[2] = q_ra - q_al - e_a;	
+
+	//Accumulated precip
+	ans[3] = q_rp + q_ra;
+
+    /*
+    if (t < 0.030) {
+        printf("time: %f\n", t);
+    } else if ((t > 0.030) && (t < 0.035)) {
+        printf("time: %f\n", t);
+        printf(" forc: %f %f %f\n", forcing_values[0], forcing_values[1], forcing_values[2]);
+        printf(" semi: %f %f\n", q_rp, q_ra);
+        printf(" flux: %f %f\n", ans[1], ans[2]);
+        printf(" state: %f %f %f %f\n", q, s_p, s_a, acc);
+    }
+    */
+}
+
+
+//Type 196
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5 
+void LinearHillslope_MonthlyEvap_OnlyRouts_NotReservoir(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+	unsigned short i;
+
+	double lambda_1 = global_params[1];
+
+	double A_h = params[2];
+	double k2 = params[3];
+	double k3 = params[4];
+	double invtau = params[5];
+
+	double q = y_i[0];		                                        // [m^3/s]
+	double s_p = y_i[1];	                                        // [m]
+	double s_a = y_i[2];	                                        // [m]
+	double acc = y_i[3];	                                        // [m]
+
+	double q_rp = forcing_values[0] * (0.001 / 60.0);		        // (mm/hr -> m/min)
+	double q_pl = k2 * s_p;                                         // (1/min * m)
+
+	double q_ra = forcing_values[1] * (0.001 / 60.0);               // (mm/hr -> m/min)
+	double q_al = k3 * s_a;                                         // (1/min * m)
+
+																	//Evaporation
+	double C_a, C_T, Corr_evap;
+	double e_pot = forcing_values[2] * (1e-3 / (30.0*24.0*60.0));	//[mm/month] -> [m/min]
+
+	if (e_pot > 0.0) {
+		C_a = s_a / e_pot;
+		C_T = C_a;
+	}
+	else {
+		C_a = 0.0;
+		C_T = 0.0;
+	}
+
+	Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+	double e_a = Corr_evap * C_a * e_pot;
+	double q_parent;
+	int q_pidx;
+
+	//Discharge
+	ans[0] = -q + ((q_al + q_pl) * A_h / 60.0);
+	for (i = 0; i < num_parents; i++) {
+		q_pidx = i * dim;
+		q_parent = y_p[q_pidx];
+		ans[0] += q_parent;
+	}
+	ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+	//Hillslope
+	ans[1] = q_rp - q_pl;
+
+	//Sub-surface
+	ans[2] = q_ra - q_al - e_a;
+
+	//Accumulated precip
+	ans[3] = q_rp + q_ra;
+
+	//Accumulated runoff
+	ans[4] = q_rp;
+}
+
+
+//Type 196
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g,v_B
+//The numbering is:        0      1        2     3  4   5   6
+void LinearHillslope_MonthlyEvap_OnlyRouts_HasReservoir(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+	ans[0] = forcing_values[3];
+	ans[1] = 0.0;
+	ans[2] = 0.0;
+	ans[3] = 0.0;
+	ans[4] = 0.0;
+}
+
+
+//Type 20
+//Order of parameters: A_i,L_i,A_h,invtau,c_1,c_2
+//The numbering is:	0   1   2    3     4   5
+//Order of global_params: v_r,lambda_1,lambda_2,beta,k_p,k_a,theta_p,theta_a,scale_p,scale_a
+//The numbering is:        0      1        2     3    4   5     6       7      8        9
+
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,c_1,c_2
+//The numbering is:	0   1   2   3  4    5    6   7
+//Order of global_params: v_r,lambda_1,lambda_2,RC,v_h,v_g
+//The numbering is:        0      1        2     3  4   5 
+void Hillslope_Toy(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+
+    unsigned short i;
+    double lambda_1 = global_params[1];
+
+
+    //For complex
+    double omega = global_params[3];
+    double alpha = global_params[4];
+    double beta = global_params[5];
+    double A_p = global_params[6];
+    double A_a = global_params[7];
+
+    /*
+    //For gamma
+    double beta = global_params[3];
+    double k_p = global_params[4];
+    double k_a = global_params[5];
+    double theta_p = global_params[6];
+    double theta_a = global_params[7];
+    double scale_p = global_params[8];
+    double scale_a = global_params[9];
+    */
+    /*
+    //For lognormal
+    double mu = global_params[3];
+    double sigma2 = global_params[4];
+    */
+    /*
+    //For exponential
+    double lambda = global_params[3];
+    double scale = global_params[4];
+    */
+    /*
+    //For line and drop
+    double t_p = global_params[3];
+    double p = global_params[4];
+    double alpha = global_params[5];
+    */
+    /*
+    //For GEV
+    double mu = global_params[3];
+    double sigma = global_params[4];
+    double ksi = global_params[5];
+    double shift = global_params[6];
+    */
+    /*
+    //For linear
+    double k2 = global_params[3];
+    double k3 = global_params[4];
+    double scale = global_params[5];
+    */
+    //General use
+    double A_h = params[2];
+    double invtau = params[3];
+    double c_1 = params[4];
+    double c_2 = params[5];
+
+    //States
+    double q = y_i[0];
+    double s_p = y_i[1];
+    double s_a = y_i[2];
+
+    //For Complex Model
+    double Q_pl = A_p * pow(sin(omega*s_p), 2.0);
+    double Q_al = A_a * (exp(alpha*s_a) - 1.0);
+    double Q_pa = beta * s_p;
+
+    /*
+    //For Gamma Forcing Model
+    //double Q_pl = A_p * pow(sin(omega*s_p),2.0);
+    //double Q_al = A_a * (exp(alpha*s_a) - 1.0);
+    double Q_pl = scale_p * c_1 * pow(t,k_p-1.0) * exp(-t/theta_p); //[m/min]
+    //double Q_al = 0.0;
+    double Q_al = scale_a * c_2 * pow(t,k_a-1.0) * exp(-t/theta_a); //[m/min]
+    double Q_pa = beta * s_p; //[m/min]
+    */
+    /*
+    //For Log Normal Forcing Model
+    double Q_pl = (t <= 0.0) ? 0.0 : c_1/t * exp( -sq(log(t)-mu)/(2.0*sigma2) );
+    double Q_al = 0.0;
+    */
+    /*
+    //For Exponential Forcing Model
+    double Q_pl = scale * lambda * exp(-lambda*t);
+    double Q_al = 0.0;
+    */
+    /*
+    //For Line and Drop Model
+    double Q_pl = (t <= t_p) ? p/t_p * t : p * exp(-alpha*(t-t_p));
+    double Q_al = 0.0;
+    */
+    /*
+    //For GEV
+    double holder = pow(1.0 + (t-shift-mu)/sigma*ksi,-1.0/ksi);
+    //double holder = (t < 25.0) ? pow(1.0 + (t-shift-mu)/sigma*ksi,-1.0/ksi) : 0.0;
+    //double holder = (t < 6.0 + shift) ? pow(1.0 + (t-shift-mu)/sigma*ksi,-1.0/ksi) : 0.0;
+    //double holder = (t < 1000.0 + shift) ? pow(1.0 + (t-shift-mu)/sigma*ksi,-1.0/ksi) : 0.0;
+    double Q_pl = 1.0/sigma * pow(holder,ksi+1) * exp(-holder);
+    double Q_al = 0.0;
+    */
+    /*
+    //For Linear Model
+    double Q_pl = scale * (k2 * 0.015 * exp(-k2*t) + k3 * 0.015 * exp(-k3*t));
+    double Q_al = 0.0;
+    */
+    //Discharge
+    ans[0] = -q + (Q_pl + Q_al) * A_h / 60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    //ans[1] = 0.0;
+    //ans[2] = 0.0;
+    ans[1] = forcing_values[0] * (0.001 / 60.0) - Q_pl - Q_pa;
+    ans[2] = -Q_al + Q_pa;
+
+}
+
+//Type 60
+//Order of parameters: A_i,L_i,A_h,h_b,k2,k3,invtau,c_1
+//The numbering is:	0   1   2   3   4  5    6    7 
+//Order of global_params: v_r,lambda_1,lambda_2,v_h,v_g,e_pot
+//The numbering is:        0      1        2     3   4   5  
+void LinearHillslope_Evap_RC(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double e_pot = global_params[5] * (1e-3 / 60.0);	//[mm/hr]->[m/min]
+
+    double A_h = params[2];	//[m^2]
+    double h_b = params[3];	//[m]
+    double k2 = params[4];
+    double k3 = params[5];
+    double invtau = params[6];
+    double c_1 = params[7];
+
+    double q = y_i[0];		//[m^3/s]
+    double s_p = y_i[1];	//[m]
+    double s_a = y_i[2];	//[m]
+
+    double q_pl = k2 * s_p;
+    double q_al = k3 * s_a;
+
+    //Run off
+    double d_soil = (s_a > h_b) ? 0.0 : h_b - s_a;
+    double RC = (s_p > 0.0) ? (s_p*(s_p + 2.0*d_soil)) / sq(s_p + d_soil) : 0.0;
+
+    //Evaporation
+    double C_p, C_a, C_T, Corr_evap;
+    if (e_pot > 0.0)
+    {
+        C_p = s_p / e_pot;
+        C_a = s_a / e_pot;
+        C_T = C_p + C_a;
+    }
+    else
+    {
+        C_p = 0.0;
+        C_a = 0.0;
+        C_T = 0.0;
+    }
+    Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_a = Corr_evap * C_a * e_pot;
+
+    //Discharge
+    ans[0] = -q + (q_pl + q_al) * A_h / 60.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Hillslope
+    ans[1] = forcing_values[0] * c_1*RC - q_pl - e_p;
+    ans[2] = forcing_values[0] * c_1*(1.0 - RC) - q_al - e_a;
+}
+
+
+// Type 21 ************************************************
+
+//Type 21
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau
+//The numbering is:	0   1   2  3  4    5
+//Order of global_params: v_r,lambda_1,lambda_2,RC,S_0,v_h,v_g
+//The numbering is:        0      1        2     3  4   5   6
+void nodam_rain_hillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[1];
+    double RC = global_params[3];
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+    //double F_et = 1.0;
+    double F_et = 0.05;
+
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+
+    //double q = invtau*S;
+    double qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*F_et*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+    //ans[3] = 0.0;
+}
+
+
+//Type 21
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3  4    5	       6      7       8     9	  10	    11       12  13  14
+//Order of global_params: v_r,lambda_1,lambda_2,RC,S_0,v_h,v_g
+//The numbering is:        0      1        2     3  4   5   6
+void dam_rain_hillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[1];
+    double RC = global_params[3];
+    double A_h = params[2];
+    double k2 = params[3];
+    double k3 = params[4];
+    double invtau = params[5];
+    double orifice_area = params[6];
+    double H_spill = params[7];
+    double H_max = params[8];
+    double S_max = params[9];
+    double alpha = params[10];
+    double diam = params[11];
+    double c_1 = params[12];
+    double c_2 = params[13];
+    double L_spill = params[14];
+    double g = 9.81;
+    double F_et = 1.0;
+
+    double qm;
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+    double h = H_max * pow(S / S_max, alpha);
+    double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+    if (state == 0)
+        //q = invtau*S;
+        qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+    else if (state == 1)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0;
+    //qm = 0.0;
+    else if (state == 2)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0;
+    else if (state == 3)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0 + invtau*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+    else if (state == 4)
+    {
+        double r = diam / 2.0;
+        double frac = (h < 2 * r) ? (h - r) / r : 1.0;
+        double A = -r*r*(acos(frac) - pow(1 - frac*frac, .5)*frac - 3.1415926535897932);
+        qm = c_1*A*pow(2 * g*h, .5) * 60.0;
+    }
+    else printf("Error in function evaluation. Invalid state %u.\n", state);
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*F_et*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+}
+
+//Type 21
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3  4    5	       6      7       8     9	  10	    11       12  13  14
+//Order of global_params: v_r,lambda_1,lambda_2,RC,S_0,v_h,v_g
+//The numbering is:        0      1        2     3  4   5   6
+void dam_q(const double * const y_i, unsigned int  num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[1];
+    double invtau = params[5];
+    double S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+
+    if (state == 0)
+        //ans[0] = invtau*S;
+        ans[0] = invtau / 60.0*pow(S, 1.0 / (1.0 - lambda_1));
+    else
+    {
+        double orifice_area = params[6];
+        double H_spill = params[7];
+        double H_max = params[8];
+        double S_max = params[9];
+        double alpha = params[10];
+        double diam = params[11];
+        double c_1 = params[12];
+        double c_2 = params[13];
+        double L_spill = params[14];
+        double g = 9.81;
+
+        double h = H_max * pow(S / S_max, alpha);
+        double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+        if (state == 1)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5);
+        //ans[0] = 0.0;
+        else if (state == 2)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5);
+        else if (state == 3)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5) + invtau / 60.0*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+        else if (state == 4)
+        {
+            double r = diam / 2.0;
+            double frac = (h < 2 * r) ? (h - r) / r : 1.0;
+            double A = -r*r*(acos(frac) - pow(1.0 - frac*frac, .5)*frac - 3.141592653589);
+            ans[0] = c_1*A*pow(2 * g*h, .5);
+        }
+        else printf("Error in dam evaluation. Invalid state %u.\n", state);
+    }
+}
+
+
+//Type 21
+//Order of parameters: A_i,L_i,A_h,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3  4    5	       6      7       8     9	  10	    11       12  13  14
+//Order of global_params: v_r,lambda_1,lambda_2,RC,S_0,v_h,v_g
+//The numbering is:        0      1        2     3  4   5   6
+int dam_check(
+    double *y, unsigned int num_dof,
+    const double * const global_params, unsigned int num_global_params,
+    const double * const params, unsigned int num_params,
+    QVSData *qvs,
+    bool has_dam,
+    void *user)
+{
+    if (!has_dam)
+        return 0;
+
+    double H_spill = params[7];
+    double H_max = params[8];
+    double S_max = params[9];
+    double alpha = params[10];
+    double diam = params[11];
+    double S = y[1];
+    double h = H_max * pow(S / S_max, alpha);
+
+    if (h < diam)		return 4;
+    if (h <= H_spill)	return 1;
+    if (h <= H_max)		return 2;
+    return 3;
+}
+
+// Type 22 ************************************************
+
+//Type 22
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau
+//The numbering is:	0   1   2   3  4   5   6  7    8
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void nodam_rain_hillslope2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+
+    //double q = invtau*S;
+    double qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+    //ans[3] = 0.0;
+}
+
+
+//Type 22
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_rain_hillslope2(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+    double orifice_area = params[9];
+    double H_spill = params[10];
+    double H_max = params[11];
+    double S_max = params[12];
+    double alpha = params[13];
+    double diam = params[14];
+    double c_1 = params[15];
+    double c_2 = params[16];
+    double L_spill = params[17];
+    double g = 9.81;
+
+    double qm;
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+    double h = H_max * pow(S / S_max, alpha);
+    double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+    if (state == 0)
+        //q = invtau*S;
+        qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+    else if (state == 1)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0;
+    //qm = 0.0;
+    else if (state == 2)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0;
+    else if (state == 3)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0 + invtau*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+    else if (state == 4)
+    {
+        double r = diam / 2.0;
+        double frac = (h < 2 * r) ? (h - r) / r : 1.0;
+        double A = -r*r*(acos(frac) - pow(1 - frac*frac, .5)*frac - 3.1415926535897932);
+        qm = c_1*A*pow(2 * g*h, .5) * 60.0;
+    }
+    else printf("Error in function evaluation. Invalid state %u.\n", state);
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+}
+
+
+//Type 22
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_q2(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[0];
+    double invtau = params[8];
+    double S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+
+    if (state == 0)
+        //ans[0] = invtau*S;
+        ans[0] = invtau / 60.0*pow(S, 1.0 / (1.0 - lambda_1));
+    else
+    {
+        double orifice_area = params[9];
+        double H_spill = params[10];
+        double H_max = params[11];
+        double S_max = params[12];
+        double alpha = params[13];
+        double diam = params[14];
+        double c_1 = params[15];
+        double c_2 = params[16];
+        double L_spill = params[17];
+        double g = 9.81;
+
+        double h = H_max * pow(S / S_max, alpha);
+        double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+        if (state == 1)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5);
+        //ans[0] = 0.0;
+        else if (state == 2)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5);
+        else if (state == 3)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5) + invtau / 60.0*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+        else if (state == 4)
+        {
+            double r = diam / 2.0;
+            double frac = (h < 2 * r) ? (h - r) / r : 1.0;
+            double A = -r*r*(acos(frac) - pow(1.0 - frac*frac, .5)*frac - 3.141592653589);
+            ans[0] = c_1*A*pow(2 * g*h, .5);
+        }
+        else printf("Error in dam evaluation. Invalid state %u.\n", state);
+    }
+}
+
+
+//Type 22
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+int dam_check2(
+    double *y, unsigned int num_dof,
+    const double * const global_params, unsigned int num_global_params,
+    const double * const params, unsigned int num_params,
+    QVSData *qvs,
+    bool has_dam,
+    void *user)
+{
+    if (!has_dam)
+        return 0;
+
+    double H_spill = params[10];
+    double H_max = params[11];
+    double S_max = params[12];
+    double alpha = params[13];
+    double diam = params[14];
+    double S = y[1];
+    double h = H_max * pow(S / S_max, alpha);
+
+    if (h < diam)		return 4;
+    if (h <= H_spill)	return 1;
+    if (h <= H_max)		return 2;
+    return 3;
+}
+
+// Type 23 ************************************************
+
+//Type 23
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau
+//The numbering is:	0   1   2   3  4   5   6  7    8
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void nodam_rain_hillslope3(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+
+    //double q = invtau*S;
+    double qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+    //ans[3] = 0.0;
+}
+
+
+//Type 23
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_rain_hillslope3(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+    double orifice_area = params[9];
+    double H_spill = params[10];
+    double H_max = params[11];
+    double S_max = params[12];
+    double alpha = params[13];
+    double diam = params[14];
+    double c_1 = params[15];
+    double c_2 = params[16];
+    double L_spill = params[17];
+    double g = 9.81;
+
+    double qm;
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+    double h = H_max * pow(S / S_max, alpha);
+    double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+    if (state == 0)
+        //q = invtau*S;
+        qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+    else if (state == 1)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0;
+    //qm = 0.0;
+    else if (state == 2)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0;
+    else if (state == 3)
+        qm = c_1*orifice_area*pow(2 * g*h, .5) * 60.0 + c_2*L_spill*pow(diff, 1.5) * 60.0 + invtau*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+    else if (state == 4)
+    {
+        //if(h < 1e-6)	qm = 0.0;
+        qm = c_2 * 2 * sqrt(h*diam - h*h) * pow(h, 1.5) * 60.0;
+    }
+    else if (state == 5)
+        qm = c_2 * diam * pow(h, 1.5) * 60.0;
+    else printf("Error in function evaluation. Invalid state %u.\n", state);
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+    //ans[1] = ans[1];
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+}
+
+
+//Type 23
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_q3(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double lambda_1 = global_params[0];
+    double invtau = params[8];
+    double S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+
+    if (state == 0)
+        //ans[0] = invtau*S;
+        ans[0] = invtau / 60.0*pow(S, 1.0 / (1.0 - lambda_1));
+    else
+    {
+        double orifice_area = params[9];
+        double H_spill = params[10];
+        double H_max = params[11];
+        double S_max = params[12];
+        double alpha = params[13];
+        double diam = params[14];
+        double c_1 = params[15];
+        double c_2 = params[16];
+        double L_spill = params[17];
+        double g = 9.81;
+
+        double h = H_max * pow(S / S_max, alpha);
+        double diff = (h - H_spill >= 0) ? h - H_spill : 0.0;
+
+        if (state == 1)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5);
+        //ans[0] = 0.0;
+        else if (state == 2)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5);
+        else if (state == 3)
+            ans[0] = c_1*orifice_area*pow(2 * g*h, .5) + c_2*L_spill*pow(diff, 1.5) + invtau / 60.0*pow(S - S_max, 1.0 / (1.0 - lambda_1));
+        else if (state == 4)
+        {
+            //if(h < 1e-6)	ans[0] = 0.0;
+            ans[0] = c_2 * 2 * sqrt(h*diam - h*h) * pow(h, 1.5);
+        }
+        else if (state == 5)
+            ans[0] = c_2 * diam * pow(h, 1.5);
+        else printf("Error in dam evaluation. Invalid state %u.\n", state);
+    }
+}
+
+
+//Type 23
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau,orifice_area,H_spill,H_max,S_max,alpha,orifice_diam,c_1,c_2,L_spill
+//The numbering is:	0   1   2  3   4   5   6  7   8          9	  10	  11   12     13      14        15  16   17
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+int dam_check3(
+    double *y, unsigned int num_dof,
+    const double * const global_params, unsigned int num_global_params,
+    const double * const params, unsigned int num_params,
+    QVSData *qvs,
+    bool has_dam,
+    void *user)
+{
+    if (!has_dam)
+        return 0;
+
+    double H_spill = params[10];
+    double H_max = params[11];
+    double S_max = params[12];
+    double alpha = params[13];
+    double diam = params[14];
+    double S = y[1];
+    double h = H_max * pow(S / S_max, alpha);
+
+    if (h < 0.5*diam)	return 4;
+    if (h < diam)		return 5;
+    if (h <= H_spill)	return 1;
+    if (h <= H_max)		return 2;
+    return 3;
+}
+
+
+// Type 40 ************************************************
+
+//Type 40
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau
+//The numbering is:	0   1   2   3  4   5   6  7    8
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void nodam_rain_hillslope_qsv(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+
+    double qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+}
+
+
+//Type 40
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau
+//The numbering is:	0   1   2  3   4   5   6  7   8
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_rain_hillslope_qsv(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+    double lambda_1 = global_params[0];
+    double A_h = params[2];
+    double RC = params[3];
+    double k2 = params[6];
+    double k3 = params[7];
+    double invtau = params[8];
+
+    double qm, q1, q2, S1, S2, S_max, q_max;
+    double S = y_i[1];
+    double Ss = y_i[2];
+    double Sg = y_i[3];
+
+    if (state == -1)
+        qm = invtau*pow(S, 1.0 / (1.0 - lambda_1));
+    else if (state == (int)qvs->n_values - 1)
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        qm = q_max*60.0 + invtau*pow(max(S - S_max, 0.0), 1.0 / (1.0 - lambda_1));
+        //qm = q_max * 60.0;
+    }
+    else
+    {
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        qm = ((q2 - q1) / (S2 - S1) * (S - S1) + q1) * 60.0;
+    }
+
+    ans[1] = k2*Ss + k3*Sg - qm;
+    for (i = 0; i<num_parents; i++)	ans[1] += y_p[i * dim] * 60.0;
+
+    ans[2] = RC*forcing_values[0] * A_h*(.001 / 60.0) - k2*Ss;
+    ans[3] = (1.0 - RC)*forcing_values[0] * A_h*(.001 / 60.0) - k3*Sg;
+}
+
+
+//Type 40
+//Order of parameters: A_i,L_i,A_h,RC,v_h,v_r,k2,k3,invtau
+//The numbering is:	0   1   2  3   4   5   6  7   8
+//Order of global_params: lambda_1,lambda_2,S_0,v_g
+//The numbering is:         0        1       2   3
+void dam_q_qvs(const double * const y_i, unsigned int num_dof, const double * const global_params, const double * const params, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double S_max, q_max;
+    double lambda_1 = global_params[0];
+    double invtau = params[8];
+    double S = (y_i[1] < 0.0) ? 0.0 : y_i[1];
+    double q1, q2, S1, S2;
+
+    if (state == -1)
+        ans[0] = invtau / 60.0*pow(S, 1.0 / (1.0 - lambda_1));
+    else if (state == ((int)(qvs->n_values) - 1))
+    {
+        S_max = qvs->points[qvs->n_values - 1][0];
+        q_max = qvs->points[qvs->n_values - 1][1];
+        ans[0] = q_max + invtau / 60.0*pow(max(S - S_max, 0.0), 1.0 / (1.0 - lambda_1));
+        //ans[0] = q_max;
+    }
+    else
+    {
+        q2 = qvs->points[state + 1][1];
+        q1 = qvs->points[state][1];
+        S2 = qvs->points[state + 1][0];
+        S1 = qvs->points[state][0];
+        ans[0] = (q2 - q1) / (S2 - S1) * (S - S1) + q1;
+    }
+}
+
+
+// Rodica's Models **************************
+
+//Type 0
+//Function for simple river system
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q
+//void simple_river(double t,double *y_i,double *y_p,unsigned short num_parents, unsigned int max_dim,double *global_params,double *forcing_values,double *params,int state,void* user,double *ans)
+void simple_river(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double lambda_1 = global_params[1];
+    double invtau = params[12];
+
+    //Flux equation (y_i[0])
+    ans[0] = -q;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+}
+
+//Type 0
+//This assumes there is only 1 variable being passed link to link.
+//double NormJx_simple_river(double *y_i,double *global_params,double *params)
+void Jsimple_river(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, double *ans)
+{
+    ans[0] = params[12] * pow(y_i[0], global_params[1]);
+}
+
+//Type 0
+//Jacobian of the simple river system******************
+//y_i has q_i (y_i[0])
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11   12     13     14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+void Jsimple(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, double *ans)
+{
+    unsigned short i;
+    double q = y_i[0];
+    double lambda_1 = global_params[1];
+    double invtau = params[12];
+
+    ans[0] = 0.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = -(lambda_1 + 1.0) * invtau * pow(q, lambda_1) + lambda_1 * invtau * pow(q, lambda_1 - 1.0) * ans[0];
+}
+
+//Type 1/3
+//Function for the simple river system with rainfall
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s
+void river_rainfall(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+
+    double invtau = params[12];
+    double c_1 = params[14];
+    double c_3 = params[16];
+    double c_4 = params[17];
+    double lambda_1 = global_params[1];
+
+    double s53 = pow(s, 5.0 / 3.0);
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * s53;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Ponded water equation (y_i[1])
+    ans[1] = c_3 * forcing_values[0] - c_4 * s53;
+}
+
+//Type 2
+//Function for simple river system with hillslope runoff
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s
+void simple_hillslope(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+
+    double invtau = params[12];
+    double c_1 = params[14];
+    double c_4 = params[17];
+    double lambda_1 = global_params[1];
+
+    double s53 = pow(s, 5.0 / 3.0);
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * s53;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Ponded water equation (y_i[1])
+    ans[1] = -c_4 * s53;
+}
+
+//Type 4
+//Function for simple river system with soil properties******************
+//Calculates the flow using the soil parameters.
+//y_i has q_i (y_i[0]), s (y_i[1]), a (y_i[2]), v (y_i[3])
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document  
+void simple_soil(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+    double a = y_i[2];
+    double v = y_i[3];
+
+    double invtau = params[12];
+    double epsilon = params[13];
+    double c_1 = params[14];
+    double c_4 = params[17];
+    double c_5 = params[18];
+    double c_6 = params[19];
+    double lambda_1 = global_params[1];
+
+    double s53 = pow(s, 5.0 / 3.0);
+    double exp_term, big_frac;
+
+    if (a < 1.0)
+    {
+        exp_term = c_6 * (1.0 - a) * v * exp(-(1.0 - a - v) / (1.0 - a));
+        //big_frac = c_5 * s * epsilon*epsilon * (1.0-a) * (1.0-a-v)*(1.0-a-v)/((s*(1.0-a) + epsilon*(1.0 - a - v))*(s*(1.0-a) + 1.0 - a - v));
+        big_frac = c_5 * s * sq(epsilon) * (1.0 - a) * sq(1.0 - a - v) / sq(s*(1.0 - a) + epsilon*(1.0 - a - v));
+    }
+    else
+    {
+        exp_term = 0.0;
+        big_frac = 0.0;
+    }
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * s53;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1)*ans[0];
+
+    //Ponded water equation (y_i[1])
+    ans[1] = -c_4 * s53 - big_frac + c_6 * a * a;
+
+    //Impermeable area (y_i[2])
+    //ans[2] = -c_6 * a * a + c_6 * (1.0 - a) + exp_term;
+    ans[2] = (-c_6 * a * a + exp_term) / epsilon;
+
+    //Soil Volumetric Water Content (y_i[3])
+    //ans[3] = big_frac - exp_term;
+    ans[3] = (big_frac - exp_term) / epsilon;
+}
+
+//Type 5
+//Function for simple river system with soil properties and rainfall******************
+//Calculates the flow using the soil parameters.
+//y_i has q_i (y_i[0]), s (y_i[1]), a (y_i[2]), v (y_i[3])
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11   12     13     14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+void soil_rainfall(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+    double a = y_i[2];
+    double v = y_i[3];
+
+    double invtau = params[12];
+    double epsilon = params[13];
+    double c_1 = params[14];
+    double c_3 = params[16];
+    double c_4 = params[17];
+    double c_5 = params[18];
+    double c_6 = params[19];
+    double lambda_1 = global_params[1];
+
+    double s53 = pow(s, 5.0 / 3.0);
+    double exp_term, big_frac;
+
+    if (a < 1.0)
+    {
+        exp_term = c_6 * (1.0 - a) * v * exp(-(1.0 - a - v) / (1.0 - a));
+        //big_frac = c_5 * s * epsilon*epsilon * (1.0-a) * (1.0-a-v)*(1.0-a-v)/((s*(1.0-a) + epsilon*(1.0 - a - v))*(s*(1.0-a) + 1.0 - a - v));
+        big_frac = c_5 * s * sq(epsilon) * (1.0 - a) * sq(1.0 - a - v) / sq(s*(1.0 - a) + epsilon*(1.0 - a - v));
+    }
+    else
+    {
+        exp_term = 0.0;
+        big_frac = 0.0;
+    }
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * s53;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1)*ans[0];
+
+    //Ponded water equation (y_i[1])
+    ans[1] = c_3 * forcing_values[0] - c_4 * s53 - big_frac + c_6 * a * a;
+
+    //Impermeable area (y_i[2])
+    //ans[2] = -c_6 * a * a + c_6 * (1.0 - a) + exp_term;
+    ans[2] = (-c_6 * a * a + exp_term) / epsilon;
+
+    //Soil Volumetric Water Content (y_i[3])
+    //ans[3] = big_frac - exp_term;
+    ans[3] = (big_frac - exp_term) / epsilon;
+}
+
+//Type 6
+//RHS function for discharge, surface ponding, saturated zone, unsaturated zone, and vegetation
+//Includes rainfall
+//This uses units and functions from Rodica's 1st (published) paper
+//Order of parameters: L_i,A_h,A_i,h_b,K_sat,K_sp,d_0,d_1,d_2,invbeta,alpha_N,alpha_soil,a_res,v_res,invtau,gamma,c_1,c_2,c_3,c_4
+//The numbering is:     0   1   2   3   4     5    6   7   8     9      10       11       12    13     14    15   16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r
+//The numbering is:        0      1        2     3   4
+void qsav_rainfall(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    //State variables
+    double q = y_i[0];
+    double s_p = y_i[1];
+    double a = y_i[2];
+    double v = y_i[3];
+
+    //Parameters and constants
+    double h_b = params[3];
+    double d_0 = params[6];
+    double d_1 = params[7];
+    double d_2 = params[8];
+    double invbeta = params[9];
+    double a_res = params[12];
+    double v_res = params[13];
+    double invtau = params[14];
+    double gamma = params[15];
+    double c_1 = params[16];
+    double c_2 = params[17];
+    double c_3 = params[18];
+    double c_4 = params[19];
+    double lambda_1 = global_params[1];
+
+    //Calculations
+    double a_adj = a - a_res;
+    double v_adj = v - v_res;
+    double av_adjsum = a_adj + v_adj;
+    double polyterm = d_0 * v_adj + d_1 * v_adj * sq(a_adj) + d_2 * sq(a_adj);
+    double expterm = exp(a_adj / c_4);
+
+    //Evaporation
+    /*
+    double c_evap = 1.0/60.0;
+    if(t < 8000.0)		c_evap *= 0.002;
+    else if(t < 15000.0)	c_evap *= 0.0005;
+    else if(t < 30000.0)	c_evap *= 0.0001;
+    else			c_evap = 0.0;
+
+    double evap;
+    if(t < 5000.0)		evap = 0.62;
+    else if(t < 18000.0)	evap = 0.48;
+    else if(t < 25000.0)	evap = 0.5;
+    else if(t < 30000.0)	evap = 0.48;
+    else if(t < 35000.0)	evap = 0.51;
+    else if(t < 40000.0)	evap = 0.44;
+    else			evap = 0.3;
+    */
+    double c_evap = 0.0;
+    double evap = 0.0;
+
+    //Flux equation
+    ans[0] = -q + gamma * c_1 * s_p * av_adjsum + gamma * c_2 * a_adj * expterm;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Ponded water equation
+    //ans[1] = (1.0 - evap) * c_3 * forcing_values[0] - c_1 * s_p * av_adjsum - c_1 * s_p * (h_b - av_adjsum);
+    ans[1] = (1.0 - evap) * c_3 * forcing_values[0] - c_1 * h_b * s_p;
+
+    //Saturated zone equation (a)
+    ans[2] = invbeta * (polyterm - c_2 * a_adj * expterm - c_evap * a_adj);
+
+    //Unsaturated zone equation (v)
+    ans[3] = invbeta * (c_1 * s_p * (h_b - av_adjsum) - polyterm);
+}
+
+
+
+//Type 15
+//Function for the simple river system with rainfall
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,v_h,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s_p
+void river_rainfall_adjusted(
+    double t,
+    const double * const y_i, unsigned int dim,
+    const double * const y_p, unsigned short num_parents, unsigned int max_dim,
+    const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s_p = y_i[1];
+
+    double L = params[0];
+    double invtau = params[12];
+    double c_1 = params[14];
+    double c_3 = params[16];
+    double c_4 = params[17];
+    double lambda_1 = global_params[1];
+
+    //double q_pl = pow(0.5*L*s_p/(L+s_p),2.0/3.0);
+    double q_pl = s_p;
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * q_pl;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+
+    //Ponded water equation (y_i[1])
+    ans[1] = c_3 * forcing_values[0] - c_4 * q_pl;
+    //ans[1] = c_3 * (forcing_values[0] + 100.0*sin(t/5.0)) - c_4 * q_pl;
+}
+
+
+//Type 315
+//Function for simple river system with data assimilation.
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13      14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,v_h,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s, followed by N entries for the variational equation
+void assim_river_rainfall_adjusted(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    printf("Error: assim models do not exist...\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+    /*
+    unsigned int i,j;
+    unsigned int dim = ans.dim;
+    unsigned int offset = 2;		//!!!! This needs to be num_dense, but without variational eqs !!!!
+    unsigned int parent_offset;
+    unsigned int problem_dim = 2;
+    unsigned int all_states = (dim-offset)/problem_dim;
+    unsigned int loc = iparams.ve[0];
+    double inflow = 0.0;
+
+    double q = y_i[0];
+    double s_p = y_i[1];
+
+    double L = params[0];
+    double invtau = params[12];
+    double c_1 = params[14];
+    double c_3 = params[16];
+    double c_4 = params[17];
+    double lambda_1 = global_params[1];
+
+    double q_to_lambda_1 = pow(q,lambda_1);
+    //double q_to_lambda_1_m1 = (q > 1e-12) ? q_to_lambda_1 / q : 1e-12;
+    double q_to_lambda_1_m1 = (q > 1e-12) ? q_to_lambda_1 / q : pow(1e-12,lambda_1 - 1.0);
+    double deriv_qpl = 1.0;
+
+    double q_pl = s_p;
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * q_pl;
+    for(i=0;i<num_parents;i++)
+    inflow += y_p[i * dim];
+    ans[0] = invtau * q_to_lambda_1 * (inflow + ans[0]);
+
+    //Ponded water equation (y_i[1])
+    ans[1] = c_3 * forcing_values[0] - c_4 * q_pl;
+    //ans[1] = c_3 * ( max(forcing_values[0] + 20.0*sin(t/5.0),0.0)) - c_4 * q_pl;
+
+    //!!!! Pull if statements out of loops (should just need two cases total) !!!!
+    //!!!! A lot of terms get repeated !!!!
+
+    //Eqs for variational equations
+    for(i=offset;i<dim;i++)	ans[i] = 0.0;
+
+    //s variable from this link
+    ans[offset] = -c_4*deriv_qpl*y_i[offset];
+
+    //q variables from this link
+    //	if(lambda_1 > 1e-12 && (inflow) > 1e-12)
+    ans[offset + 1] = (lambda_1 * invtau * q_to_lambda_1_m1 * (inflow + c_1*s_p) - (lambda_1 + 1) * invtau * q_to_lambda_1) * y_i[offset + 1];
+    //	else
+    //		ans[offset + 1] = -(lambda_1 + 1.0) * invtau * q_to_lambda_1 * y_i[offset + 1];
+
+    //	if(lambda_1 > 1e-12 && (inflow) > 1e-12)
+    ans[offset + 2] = (lambda_1 * invtau * q_to_lambda_1_m1 * (inflow + c_1*s_p) - (lambda_1 + 1) * invtau * q_to_lambda_1) * y_i[offset + 2] + invtau*c_1*q_to_lambda_1*deriv_qpl * y_i[offset];
+    //	else
+    //		ans[offset + 2] = -(lambda_1 + 1.0) * invtau * q_to_lambda_1 * y_i[offset + 2] + invtau*c_1*deriv_qpl*y_i[offset];
+
+    //Adjust offset
+    offset += 3;
+
+    //Variables from parents
+    for(i=0;i<num_parents;i++)
+    {
+    parent_offset = 1 + problem_dim;
+
+    for(j=0;j<numupstream[i];j++)
+    {
+    ans[offset] = invtau * q_to_lambda_1 * y_p[i].ve[parent_offset];
+    //			if(lambda_1 > 1e-12 && (inflow) > 1e-12)
+    ans[offset] += (lambda_1 * invtau * q_to_lambda_1_m1 * (inflow + c_1*s_p) - (lambda_1 + 1) * invtau * q_to_lambda_1) * y_i[offset];
+    //			else
+    //				ans[offset] += -(lambda_1 + 1.0) * invtau * q_to_lambda_1 * y_i[offset];
+
+    ans[offset + 1] = invtau * q_to_lambda_1 * y_p[i].ve[parent_offset + 1];
+    //			if(lambda_1 > 1e-12 && (inflow) > 1e-12)
+    ans[offset + 1] += (lambda_1 * invtau * q_to_lambda_1_m1 * (inflow + c_1*s_p) - (lambda_1 + 1) * invtau * q_to_lambda_1) * y_i[offset + 1];
+    //			else
+    //				ans[offset + 1] += -(lambda_1 + 1.0) * invtau * q_to_lambda_1 * y_i[offset + 1];
+
+    offset += 2;
+    parent_offset += 2;
+    }
+    }
+    */
+}
+
+
+
+//Type 30
+//Function for river system with soil properties and rainfall******************
+//This uses Luciana's model
+//Calculates the flow using the soil parameters.
+//y_i has q (y_i[0]), s_p (y_i[1]), h_w (y_i[2]), theta (y_i[3])
+//Order of parameters: L_h,A_h,A_up,H_b,H_h,max_inf_rate,K_SAT,S_H,n_vh, b, c, d,K_Q,V_T,c_1,c_2,c_3,c_4,c_5,c_6,c_7
+//The numbering is:     0   1   2    3   4       5         6    7   8    9 10 11  12  13  14  15  16  17  18  19  20
+//Order of global_params: v_0,lambda_1,lambda_2,Q_r,A_r,K_T,C_r,e_pot
+//The numbering is:        0      1        2     3   4   5   6   7
+/*
+void lcuencas_soilrain(double t,double *y_i,double *y_p,unsigned short num_parents, unsigned int max_dim,double *global_params,double *forcing_values,QVSData *qvs,double *params,int state,void* user,double *ans)
+{
+unsigned int i;
+
+//States
+double q = y_i[0];		//[m^3/s]
+double s_p = y_i[1];	//[mm]
+double h_w = y_i[2];	//[m]
+double theta = y_i[3];	//[%]
+
+//Global params
+//double v_0 = global_params[0];
+double lambda_1 = global_params[1];
+//double lambda_2 = global_params[2];
+//double A_r = global_params[4];
+double K_T = global_params[5];
+double e_pot = global_params[7];
+
+//Local params
+double A_h = params[1];
+double H_b = params[3];
+double H_h = params[4];
+double maxinf = params[5];
+//double K_SAT = params[6];
+double K_SAT = (H_h > 1e-12) ? params[6] : 0.0;
+double b = params[9];
+double c = params[10];
+double d = params[11];
+double K_Q = params[12];
+double V_T = params[13];
+double c_1 = params[14];
+double c_2 = params[15];
+double c_3 = params[16];
+double c_4 = params[17];
+double c_5 = params[18];
+double c_6 = params[19];
+double c_7 = params[20];
+
+//Other
+//double H_T = H_b + H_h;
+double h_rel = h_w - H_b * 1e-3;
+//double H_relmax = H_T - H_b;
+double H_relmax = (H_h > 1e-12) ? H_h : 1e-6;
+double hoverH = h_rel / H_relmax;
+double a_IoverA_H = b * hoverH + c * sq(hoverH) + d * sq(hoverH) * hoverH;
+if(a_IoverA_H < 0.0)	a_IoverA_H = 1e-6;
+if(a_IoverA_H > 0.9999)	a_IoverA_H = 0.9999;
+double a_PoverA_H = 1.0 - a_IoverA_H;
+double v_H = c_1 * pow(s_p * 1e-3,2.0/3.0);
+if(v_H > 350.0)	v_H = 350.0;
+double v_ssat = V_T * a_IoverA_H;
+double v_sunsat = V_T - v_ssat;
+double d_soil = (1.0 - theta) * H_b;
+double RC = (s_p <= 0.0) ? 0.0 : s_p*(s_p + 2*d_soil) / sq(s_p + d_soil);
+double deriv_a_I = c_7 * (b + 2*c*hoverH + 3*d*sq(hoverH));
+if(deriv_a_I <= (1e-5*1e6)) deriv_a_I = (100.0*1e6);		//Should use this
+//if(deriv_a_I <= (1e-0)) deriv_a_I = 1e-0;
+double K_UNSAT = K_SAT * exp(5.0 * (theta - 1.0));
+double infrate = (s_p > maxinf) ? infrate = maxinf : s_p * K_T;
+//double infrate = s_p*K_T;
+//if(infrate > maxinf)	infrate = maxinf;
+
+
+//Evaporation
+//double C_p = (e_pot > 0.0) ? s_p / e_pot : 0.0;
+double D_unsat = 1e-3 * v_sunsat * theta / A_h;
+double D_sat = 1e-3 * v_ssat / A_h;
+
+double C_p,C_unsat,C_sat,C_T;
+if(e_pot > 0.0)
+{
+C_p = s_p / e_pot;
+C_unsat = D_unsat / e_pot;
+C_sat = D_sat / e_pot;
+C_T = C_p + C_unsat + C_sat;
+}
+else
+{
+C_p = 0.0;
+C_unsat = 0.0;
+C_sat = 0.0;
+C_T = 0.0;
+}
+
+
+//double C_unsat = D_unsat / H_b * a_PoverA_H;
+//double C_sat = D_sat/H_b * a_IoverA_H;
+//double C_s = 0.0;
+//C_T = C_s + C_unsat + C_sat;
+
+double Corr_evap = (C_T > 1.0) ? 1.0/C_T : 1.0;
+double e_p = Corr_evap * C_p * e_pot;
+double e_sat = Corr_evap * C_sat * e_pot;
+double e_unsat = Corr_evap * C_unsat * e_pot;
+
+
+//Fluxes
+double q_pl = c_2 * (a_PoverA_H * RC + a_IoverA_H) * v_H * s_p;
+double q_sl = c_3 * v_ssat * a_IoverA_H;
+double snow_M = 0.8 * 0.0;	//Assume no snow for now
+double q_pu = a_PoverA_H * infrate * (1.0 - RC);
+double q_us = 1e3 * K_UNSAT * theta * a_PoverA_H;
+
+//!!!! This might be cleaner if H_b is converted into m !!!!
+
+//Channel transport
+ans[0] = -q;
+for(i=0;i<num_parents;i++)	ans[0] += y_p[i * dim];
+ans[0] = K_Q * pow(q,lambda_1) * (ans[0] + c_4 * (q_pl + q_sl + snow_M));
+
+//Land surface storage
+ans[1] = (1.0/60.0) * (forcing_values[0] - q_pl - q_pu - e_p);
+
+//Water table
+ans[2] = (H_b < 1e-6) ? 0.0 : c_5 / deriv_a_I * (q_us - q_sl - e_sat);
+
+//Soil volumetric water content
+//ans[3] = (v_sunsat < 1e-6) ? 0.0 : c_6 / v_sunsat * (q_pu - q_us - e_unsat + theta*(q_us - q_sl - e_sat));
+//ans[3] = (v_sunsat < 1e-12) ? -100.0 : c_6 / v_sunsat * (q_pu - q_us - e_unsat + theta*(q_us - q_sl - e_sat));
+ans[3] = c_6 / v_sunsat * (q_pu - q_us - e_unsat + theta*(q_us - q_sl - e_sat));
+}
+*/
+
+void lcuencas_soilrain(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned int i;
+
+    //States
+    double q = y_i[0];
+    double s_p = y_i[1];
+    double h_w = y_i[2];
+    double theta = y_i[3];
+
+    //Global params
+    //double v_0 = global_params[0];
+    double lambda_1 = global_params[1];
+    //double lambda_2 = global_params[2];
+    //double A_r = global_params[4];
+    double K_T = global_params[5];
+    double e_pot = forcing_values[1];
+    //double e_pot = global_params[7];
+
+    //Local params
+    //double L_h = params[0];
+    double A_h = params[1];
+    //double A_up = params[2];
+    double H_b = params[3];
+    double H_h = params[4];
+    double maxinf = params[5];
+    double K_SAT = params[6];
+    //double S_H = params[7];
+    //double n_vh = params[8];
+    double b = params[9];
+    double c = params[10];
+    double d = params[11];
+    double K_Q = params[12];
+    double V_T = params[13];
+    double c_1 = params[14];
+    double c_2 = params[15];
+    double c_3 = params[16];
+    double c_4 = params[17];
+    double c_5 = params[18];
+    double c_6 = params[19];
+    double c_7 = params[20];
+
+    //Other
+    //double H_T = H_b + H_h;
+    double h_rel = h_w - H_b * 1e-3;
+    //if(h_rel <= 0)	h_rel = 0.01;
+    double H_relmax = (H_h > 1e-12) ? H_h : 1e-6;
+    double hoverH = h_rel / H_relmax;
+    double a_IoverA_H = b * hoverH + c * sq(hoverH) + d * sq(hoverH) * hoverH;
+    if (a_IoverA_H < 0.0)	a_IoverA_H = 1e-6;
+    //if(a_IoverA_H <= 0)	a_IoverA_H = 1e-8 / A_h;
+    double a_PoverA_H = 1.0 - a_IoverA_H;
+    double v_H = c_1 * pow(s_p * 1e-3, 2.0 / 3.0);
+    if (v_H > 350.0)	v_H = 350.0;
+    double v_ssat = V_T * a_IoverA_H;
+    double v_sunsat = V_T - v_ssat;
+    double d_soil = (1.0 - theta) * H_b;
+    double RC = (s_p <= 0.0) ? 0.0 : s_p*(s_p + 2 * d_soil) / sq(s_p + d_soil);
+    double deriv_a_I = c_7 * (b + 2 * c*hoverH + 3 * d*sq(hoverH));
+    //if(deriv_a_I <= 0.0)	deriv_a_I = 100.0;
+    if (deriv_a_I <= 1e-5) deriv_a_I = 100.0;
+    double K_UNSAT = K_SAT * exp(5.0 * (theta - 1.0));
+    double infrate = (s_p > maxinf) ? infrate = maxinf : s_p * K_T;
+
+    //Evaporation
+    //double e_pot = 0.0;	//!!!! This should be an input function !!!!
+    double C_p = (e_pot > 0.0) ? s_p / e_pot : 0.0;
+    double D_unsat = 1e-3 * v_sunsat * theta / A_h;
+    double D_sat = 1e-3 * v_ssat / A_h;
+    double C_unsat = D_unsat / H_b * a_PoverA_H;
+    double C_sat = D_sat / H_b * a_IoverA_H;
+    //double C_s = 0.0;		//!!!! Don't know what to use here !!!!
+    //double C_T = C_s + C_unsat + C_sat;
+    double C_T = C_p + C_unsat + C_sat;
+    double Corr_evap = (C_T > 1.0) ? 1.0 / C_T : 1.0;
+    double e_p = Corr_evap * C_p * e_pot;
+    double e_sat = Corr_evap * C_sat * e_pot;
+    double e_unsat = Corr_evap * C_unsat * e_pot;
+
+    //Fluxes
+    double q_pl = c_2 * (a_PoverA_H * RC + a_IoverA_H) * v_H * s_p;
+    double q_sl = c_3 * v_ssat * a_IoverA_H;
+    double snow_M = 0.8 * 0.0;	//Assume no snow for now
+    double q_pu = a_PoverA_H * infrate * (1.0 - RC);
+    double q_us = 1e3 * K_UNSAT * theta * a_PoverA_H;
+
+    //!!!! This might be cleaner if H_b is converted into m !!!!
+
+    //Channel transport
+    ans[0] = -q;
+    for (i = 0; i<num_parents; i++)	ans[0] += y_p[i * dim];
+    ans[0] = K_Q * pow(q, lambda_1) * (ans[0] + c_4 * (q_pl + q_sl + snow_M));
+
+    //Land surface storage
+    ans[1] = (1.0 / 60.0) * (forcing_values[0] - q_pl - q_pu - e_p);
+
+    //Water table
+    ans[2] = (H_b < 1e-6) ? 0.0 : c_5 / deriv_a_I * (q_us - q_sl - e_sat);
+
+    //Soil volumetric water content
+    ans[3] = (v_sunsat < 1e-6) ? 0.0 : c_6 / v_sunsat * (q_pu - q_us - e_unsat + theta*(q_us - q_sl - e_sat));
+    /*
+    dump.ve[0] = e_p + e_sat + e_unsat;
+    dump.ve[1] = q_pu;
+    dump.ve[2] = q_pl;
+    dump.ve[3] = q_sl;
+    */
+}
+
+
+//Type 4
+//Jacobian of the simple river system with soil properties function******************
+//y_i has q_i (y_i[0]), s (y_i[1]), a (y_i[2]), v (y_i[3])
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,epsilon,c_1,c_2,c_3,c_4,c_5,c_6
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11   12     13     14  15  16  17  18  19
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+void Jsimple_soil(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+    double a = y_i[2];
+    double v = y_i[3];
+
+    double invtau = params[12];
+    double epsilon = params[13];
+    double c_1 = params[14];
+    double c_4 = params[17];
+    double c_5 = params[18];
+    double c_6 = params[19];
+    double lambda_1 = global_params[1];
+
+    double qlambda_1 = pow(q, lambda_1);
+    double s23 = pow(s, 2.0 / 3.0);
+    double expterm = (v == 1.0 - a) ? 0.0 : exp(-(1 - a - v) / (1 - a));
+    double denom = (s*(1 - a) + epsilon*(1 - a - v))*(s*(1 - a) + epsilon*(1 - a - v))*(s*(1 - a) + epsilon*(1 - a - v));
+
+    //Calculate total inflow
+    ans[0 * dim + 0] = 0.0;
+    for (i = 0; i<num_parents; i++)
+        ans[0 * dim + 0] += y_p[i * dim];
+
+    //Calculate the jacobian
+    ans[0 * dim + 0] = qlambda_1 * (lambda_1 * invtau * (ans[0 * dim + 0] - q + c_1*s23*s) / q - invtau);
+    //ans[0 * dim + 0] = qlambda_1 * ( lambda_1 * invtau * (ans[0 * dim + 0] - q + c_1*s23*s + 100.0) / q - invtau );
+    ans[0 * dim + 1] = 5 / 3 * c_1 * invtau * qlambda_1 * s23;
+    ans[0 * dim + 2] = 0.0;
+    ans[0 * dim + 3] = 0.0;
+
+    ans[1 * dim + 0] = 0.0;
+    if (denom == 0.0)
+    {
+        ans[1 * dim + 1] = c_5 * (1.0 - a);
+        ans[1 * dim + 2] = 0.0;
+        ans[1 * dim + 3] = 0.0;
+    }
+    else
+    {
+        ans[1 * dim + 1] = -5.0 / 3.0*c_4*s23 - c_5*(1 - a)*(epsilon*(1 - a - v))*(epsilon*(1 - a - v))*(-s*(1 - a) + epsilon*(1 - a - v)) / denom;
+        ans[1 * dim + 2] = c_5*epsilon*epsilon*s*(1 - a - v)*((1 - a)*s*(1 + v - a) + epsilon*(1 - a - v)*(1 - a - v)) / denom;
+        ans[1 * dim + 3] = 2 * c_5*epsilon*epsilon*s*s*(1 - a)*(1 - a)*(1 - a - v) / denom;
+    }
+
+    ans[2 * dim + 0] = 0.0;
+    ans[2 * dim + 1] = 0.0;
+    ans[2 * dim + 2] = (v == 1.0 - a) ? -2 * c_6*a / epsilon : c_6 / ((1 - a)*epsilon) * (v*(v - 1)*expterm + a*v*expterm) + 2 * c_6*a / epsilon;
+    ans[2 * dim + 3] = c_6 / epsilon*(1 - a + v)*expterm;
+
+    ans[3 * dim + 0] = 0.0;
+    if (denom == 0)
+    {
+        ans[3 * dim + 1] = -c_5 / epsilon * (1 - a);
+        ans[3 * dim + 2] = (a == 1.0) ? 0.0 : c_6 * v / epsilon * (1 - a - v) / (1 - a) * expterm;
+        ans[3 * dim + 3] = -c_6 / epsilon * (1 + v - a) * expterm;
+    }
+    else
+    {
+        ans[3 * dim + 1] = c_5*epsilon*(1 - a)*(1 - a - v)*(1 - a - v)*(s - a*s - epsilon*(1 - a - v)) / denom;
+        ans[3 * dim + 2] = (1 - a - v) / epsilon * (c_6 / (1 - a)*v*expterm + c_5*epsilon*epsilon*s*((1 - a)*s*(a - v - a) - epsilon*(1 - a - v)*(1 - a - v)) / denom);
+        ans[3 * dim + 3] = -c_6 / epsilon*(1 + v - a)*expterm + 2 * c_5*epsilon*s*s*(1 - a)*(1 - a)*(-1 + a + v) / denom;
+    }
+}
+
+//Type 101
+void Robertson(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    double y1 = y_i[0];
+    double y2 = y_i[1];
+    double y3 = y_i[2];
+
+    ans[0] = -.04 * y1 + 1e4 * y2 * y3;
+    ans[1] = .04 * y1 - 1e4 * y2 * y3 - 3e7 * y2 * y2;
+    ans[2] = 3e7 * y2 * y2;
+}
+
+//Type 101
+void JRobertson(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, double *ans)
+{
+    double y2 = y_i[1];
+    double y3 = y_i[2];
+
+    ans[0 * dim + 0] = -.04;
+    ans[0 * dim + 1] = 1e4 * y3;
+    ans[0 * dim + 2] = 1e4 * y2;
+
+    ans[1 * dim + 0] = .04;
+    ans[1 * dim + 1] = -1e4 * y3 - 6e7 * y2;
+    ans[1 * dim + 2] = -1e4 * y2;
+
+    ans[2 * dim + 0] = 0.0;
+    ans[2 * dim + 1] = 6e7 * y2;
+    ans[2 * dim + 2] = 0.0;
+}
+
+//Type 105
+//This is the model used in the Asynch summary paper
+//Function for the simple river system with rainfall
+//Calculates the flow using simple parameters, using only the flow q.
+//Order of parameters: L_i,A_h,A_i,h_b,h_H,max_inf_rate,K_sat,S_h,eta,b_H,c_H,d_H,invtau,c_1,c_2,c_3
+//The numbering is:     0   1   2   3   4       5         6    7   8   9   10  11  12    13  14  15 
+//Order of global_params: v_r,lambda_1,lambda_2,Q_r,A_r,RC
+//The numbering is:        0      1        2     3   4   5
+//This uses the units and functions from September 18, 2011 document
+//y_i[0] = q, y_i[1] = s
+void river_rainfall_summary(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double q = y_i[0];
+    double s = y_i[1];
+
+    double invtau = params[12];
+    double c_1 = params[13];
+    double c_2 = params[14];
+    double c_3 = params[15];
+    double lambda_1 = global_params[1];
+
+    double s53 = pow(s, 5.0 / 3.0);
+
+    //Flux equation (y_i[0])
+    ans[0] = -q + c_1 * s53;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+}
+    //Ponded water equation (y_i[1])
+//The numbering is:	0   1   2    3     4
+//Order of global_params: v_0,lambda_1,lambda_2
+//The numbering is:        0      1        2
+void Tiling(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans)
+{
+    unsigned short i;
+
+    double lambda_1 = global_params[1];
+    double A_h = params[2];	//[m^2]
+    double invtau = params[3];	//[1/min]
+    double c_1 = params[4];
+
+    double hillslope_flux = forcing_values[0] * c_1;	//[m^3/s]
+
+    double q = y_i[0];		//[m^3/s]
+
+    //Discharge
+    ans[0] = -q + hillslope_flux;
+    for (i = 0; i<num_parents; i++)
+        ans[0] += y_p[i * dim];
+    ans[0] = invtau * pow(q, lambda_1) * ans[0];
+}
+
+// ############################################################################
+//  TEMPERATURE MODEL FUNCTIONS///
+
+double solar_radiation(double hsi, double sf){
+    double hs = 0.97*hsi*(1 -sf);
+    return hs;
+}
+
+double longwave_radiation(double tair, double rh, double cloud, double twater){
+
+    // Stefan-Boltzmann constant (W/m2 K4)
+    const double sigma = 5.67e-8;
+    
+    if (rh > 100){
+        rh = 100;
+    }
+    // Saturation Vapor Pressure
+    double es = 6.1275 * exp(17.27 * tair / (237.3 + twater));
+    
+    // Vapor Pressure
+    double ea = (rh/100) * es;
+    
+    // Atmospheric emissivity
+    double Ea = 1.72 * pow(((ea * 0.1) / (273.2 + tair)), 1.0 / 7.0) * (1 + 0.22 * pow(cloud, 2));
+    
+    // Net long-wave radiation
+    double hl = 0.97 * sigma * ((Ea * pow((tair + 273.2), 4)) - pow((twater + 273.2), 4));
+    
+    return hl;
+}
+
+double evaporative_heat_transfer(double rh, double a, double b, double twater, double w2) {
+    // Water density (kg/m3)
+    const double p = 997;
+
+    if (rh > 100) {
+        rh = 100;
+    }
+
+    // Latent heat of vaporization in J/kg
+    double l = 1000 * (2501.4 + (1.83 * twater));
+
+    // Saturation vapor pressure at water surface temperature
+    double es_ = 6.1275 * exp(17.27 * twater / (237.3 + twater));
+
+    // Vapor Pressure
+    double ea_ = (rh / 100) * es_;
+
+    // Wind function
+    double fw = a + b * w2;
+
+    // Evaporative Heat Transfer
+    double he = p * l * fw * (es_ - ea_);
+
+    return he;
+}
+
+double convective_heat_transfer(double pa, double tair, double twater, double a, double b, double w2) {
+    // Water density (kg/m3)
+    const double p = 997;
+
+    // Latent heat of vaporization in J/kg
+    double L = 1000 * (2501.4 + (1.83 * twater));
+
+    // Wind function
+    double fw = a + b * w2;
+
+    // Convective Heat Transfer
+    double hc = 0.61 * (pa / 1000) * p * L * fw * (twater - tair);
+
+    return hc;
+}
+
+// Model type 700, first version temperature process 
+// take place only over the streams
+void Temperature_Model(double t, const double * const y_i, unsigned int dim, const double * const y_p, unsigned short num_parents, unsigned int max_dim, const double * const global_params, const double * const params, const double * const forcing_values, const QVSData * const qvs, int state, void* user, double *ans){
+    // Global paremeters
+    double sigma = global_params[0];                 // Stefan-Boltzmann constant [W/m2 K4]
+    double p = global_params[1];                     // Water density [kg/m3]
+    double c = global_params[2];                     // Specific heat of water [J/kg°C]
+    double forc_sf =  global_params[3];              // Dimensionless
+    double w2_a =  global_params[4];                 // Wind coefficient - Dimensionless
+    double w2_b =  global_params[5];                 // Wind coefficient - Dimensionless    
+    
+    // Local paremeters
+    double c_depth = params[3];                      // Dimensionless
+    double f_depth = params[4];                      // Dimensionless
+
+    // Forcings
+    double forc_hsi = forcing_values[0];             // Incoming solar radiation [W/m2]
+    double forc_tair = forcing_values[1];  // Air temperature [°C]       
+    double forc_rh = forcing_values[2];              // Relative humidity - [0,1]
+    double forc_cloud = forcing_values[3] * 0.01;    // Cloud cover fraction - [0,1]
+    double forc_w2 = forcing_values[4];              // Wind velocity at 2m [m/s]
+    double forc_pa = forcing_values[5] * 0.01;       // Atmospheric pressure [mbar]
+    double forc_ql =  forcing_values[6];             // Flow local [m/s]
+    double forc_qp[4] = {0};
+    forc_qp[0] =  forcing_values[7];                 // Flow link 1 [m/s]
+    forc_qp[1] =  forcing_values[8];                 // Flow link 2 [m/s]
+    forc_qp[2] =  forcing_values[9];                 // Flow link 3 [m/s]
+    forc_qp[3] =  forcing_values[10];                // Flow link 4 [m/s] //
+    
+
+    // Temperature states
+    double t_channel = y_i[0];                       // Water temperature previous step [°C]    
+
+    // Mass Transfer    
+    double t_parent;
+	int t_pidx;
+    unsigned short i;
+    double total_q = forc_ql; // [m3 s-1]
+    double M = forc_ql * t_channel; // [°C * m3 s-1]
+    for (i = 0; i < num_parents; i++) {
+        t_pidx = i * dim;
+		t_parent = y_p[t_pidx];
+		M += t_parent * forc_qp[i]; // [°C * m3 s-1]
+        total_q += forc_qp[i]; // [m3 s-1]
+	}
+    if (total_q > 0){
+        M = M/total_q;
+    } else{
+        M = t_channel;
+    }
+
+    //Heat Energy Budget
+    double Hs = solar_radiation(forc_hsi, forc_sf);                                         // Solar radiation
+    double Hl = longwave_radiation(forc_tair, forc_rh, forc_cloud, M);                      // Net Long-Wave Radiation
+    double He = evaporative_heat_transfer(forc_rh, w2_a, w2_b, M, forc_w2);                 // Evaporative Heat Transfer
+    double Hc = convective_heat_transfer(forc_pa, forc_tair, M, w2_a, w2_b, forc_w2);       // Convective Heat Transfer
+
+    double HT = (Hs + Hl - He - Hc)*3600;                   // Total Heat Flux [W/m2]
+    double depth = c_depth * pow(forc_ql, f_depth);         // Channel depth [m]
+    if (depth < 0.1){
+        depth = 0.1;
+    }
+    double E = HT/(60*c*p*depth);                           // Energy budget [°C]/[min]
+    ans[0] = E;
+}
+>>>>>>> upstream/temp_model
